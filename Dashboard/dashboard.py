@@ -206,11 +206,13 @@ app.layout = html.Div([
             html.Div([
 
                 # Intervalo de auto-refresh para la simulacion
-                dcc.Interval(id='dt-sim-interval', interval=5_000,
+                dcc.Interval(id='dt-sim-interval', interval=3_000,
                              n_intervals=0, disabled=True),
 
                 # Store para guardar el id del experimento simulado activo
                 dcc.Store(id='dt-sim-exp-id', data=None),
+                # Store para guardar timestamp de última medición
+                dcc.Store(id='dt-last-ts', data=None),
 
                 html.Div([
 
@@ -256,6 +258,19 @@ app.layout = html.Div([
                         dcc.Slider(id='dt-corriente', min=0.005, max=0.200, step=0.005, value=0.100,
                                    marks={v: str(round(v, 3)) for v in [0.005, 0.05, 0.10, 0.15, 0.200]}),
 
+                        html.Label('Modo de simulacion', style={**SL, 'marginTop': '12px'}),
+                        dcc.RadioItems(
+                            id='dt-modo',
+                            options=[
+                                {'label': '  Continuo (corriente fija)', 'value': 'continuo'},
+                                {'label': '  Curva (21 puntos i)', 'value': 'curva'},
+                            ],
+                            value='continuo',
+                            style={'fontFamily': 'Arial', 'fontSize': '12px',
+                                   'color': '#2c3e50', 'marginBottom': '8px'},
+                            labelStyle={'display': 'block', 'marginBottom': '4px'}
+                        ),
+
                         # Botones simulacion
                         html.Div([
                             html.Button(
@@ -294,6 +309,12 @@ app.layout = html.Div([
                             'marginTop': '10px', 'textAlign': 'center',
                             'padding': '8px', 'borderRadius': '6px',
                             'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'
+                        }),
+                        # Indicador tiempo desde última medición
+                        html.Div(id='sim-ultima-medicion', style={
+                            'fontFamily': 'Arial', 'fontSize': '11px',
+                            'marginTop': '4px', 'textAlign': 'center',
+                            'color': '#95a5a6'
                         }),
 
                         # Boton cargar experimento cercano
@@ -517,10 +538,11 @@ def update_var(var):
     State('dt-N2c',  'value'),
     State('dt-r1',   'value'),
     State('dt-corriente', 'value'),
+    State('dt-modo',      'value'),
     State('dt-sim-exp-id', 'data'),
     prevent_initial_call=True
 )
-def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, exp_id_actual):
+def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, modo, exp_id_actual):
     global _sim_process
 
     from dash import ctx
@@ -546,9 +568,10 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
         sim_path = os.path.normpath(
             os.path.join(_dashboard_dir, '..', 'simulador', 'simulador_mcfc.py')
         )
+        modo_sim = modo if modo else 'continuo'
         cmd = [
             'python3', sim_path,
-            '--modo',        'continuo',
+            '--modo',        modo_sim,
             '--temperatura', str(int(T)),
             '--h2a',   str(H2a),
             '--h2oa',  str(H2Oa),
@@ -557,9 +580,14 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
             '--co2c',  str(CO2c),
             '--n2c',   str(N2c),
             '--r1',    str(r1),
-            '--corriente', str(corriente),
             '--intervalo', '3'
         ]
+        # corriente solo aplica en modo continuo
+        if modo_sim == 'continuo':
+            cmd += ['--corriente', str(corriente)]
+        # en modo curva se hace 1 solo ciclo
+        if modo_sim == 'curva':
+            cmd += ['--ciclos', '1']
         try:
             import time as _time
             t_inicio = datetime.now(timezone.utc)
@@ -590,8 +618,13 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
                 except Exception:
                     pass
             style = {**status_base, 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
-            label = (f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
-                     if new_exp_id else f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | exp pendiente')
+            if new_exp_id:
+                if modo_sim == 'continuo':
+                    label = f'● Simulando ({modo_sim}) — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
+                else:
+                    label = f'● Simulando ({modo_sim}) — T={T}°C | Exp {new_exp_id}'
+            else:
+                label = f'● Simulando ({modo_sim}) — T={T}°C | exp pendiente'
             return False, new_exp_id, label, style
         except Exception as ex:
             style = {**status_base, 'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
@@ -608,6 +641,47 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
 
     style = {**status_base, 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
     return True, None, 'Sin simulacion activa', style
+
+
+# Actualizar indicador de última medición
+@app.callback(
+    Output('sim-ultima-medicion', 'children'),
+    Input('dt-sim-interval', 'n_intervals'),
+    State('dt-sim-exp-id', 'data'),
+    prevent_initial_call=True
+)
+def actualizar_ultima_medicion(n, exp_id):
+    if not exp_id:
+        return ''
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        row = pd.read_sql(
+            "SELECT timestamp_medicion FROM mediciones "
+            "WHERE id_experimento = %s "
+            "ORDER BY timestamp_medicion DESC LIMIT 1",
+            conn, params=(exp_id,)
+        )
+        conn.close()
+        if row.empty:
+            return 'Sin mediciones aún'
+        ts = pd.to_datetime(row['timestamp_medicion'].iloc[0], utc=True)
+        ahora = datetime.now(timezone.utc)
+        seg = int((ahora - ts).total_seconds())
+        if seg < 10:
+            color = '#27ae60'   # verde — reciente
+            icono = '🟢'
+        elif seg < 30:
+            color = '#f39c12'   # naranja — tardando
+            icono = '🟡'
+        else:
+            color = '#e74c3c'   # rojo — sin datos
+            icono = '🔴'
+        return html.Span(
+            f'{icono} Última medición: hace {seg}s',
+            style={'color': color, 'fontWeight': 'bold'}
+        )
+    except Exception:
+        return ''
 
 
 # Actualizar curva DT + visor de variables en tiempo real
