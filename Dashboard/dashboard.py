@@ -5,6 +5,10 @@ import plotly.express as px
 import pandas as pd
 import numpy as np
 import psycopg2
+import subprocess
+import os
+import signal
+from datetime import datetime, timezone
 
 # ── Constantes fisicas ─────────────────────────────────────────────────────────
 R_GAS  = 8.314
@@ -48,15 +52,13 @@ def metricas(y_real, y_pred):
     return r2, mae, nrmse
 
 # ── Configuracion PostgreSQL ───────────────────────────────────────────────────
-DB_CONFIG = {
-    'host':     'localhost',
-    'port':     5432,
-    'database': 'mcfc_digital_twin',
-    'user':     'mcfc_user',
-    'password': 'Lasvioletas1756'
-}
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..'))
+from config import DB_CONFIG
 
-# ── Carga de datos ─────────────────────────────────────────────────────────────
+# ── Proceso simulador global ───────────────────────────────────────────────────
+_sim_process = None
+
 def get_data():
     conn = psycopg2.connect(**DB_CONFIG)
     df = pd.read_sql('''
@@ -92,6 +94,15 @@ app.title = "Digital Twin MCFC"
 SL = {'fontFamily': 'Arial', 'fontWeight': 'bold', 'marginTop': '12px'}
 SP = {'padding': '20px', 'width': '28%', 'display': 'inline-block', 'verticalAlign': 'top'}
 SG = {'width': '70%', 'display': 'inline-block'}
+
+# ── Estilos comunes ────────────────────────────────────────────────────────────
+CARD_STYLE = {
+    'backgroundColor': 'white',
+    'borderRadius': '10px',
+    'boxShadow': '0 2px 8px rgba(0,0,0,0.08)',
+    'padding': '16px',
+    'marginBottom': '12px'
+}
 
 app.layout = html.Div([
 
@@ -194,58 +205,109 @@ app.layout = html.Div([
         dcc.Tab(label='Digital Twin', children=[
             html.Div([
 
+                # Intervalo de auto-refresh para la simulacion
+                dcc.Interval(id='dt-sim-interval', interval=5_000,
+                             n_intervals=0, disabled=True),
+
+                # Store para guardar el id del experimento simulado activo
+                dcc.Store(id='dt-sim-exp-id', data=None),
+
                 html.Div([
-                    html.H4("Condiciones de operacion",
-                            style={'fontFamily': 'Arial', 'color': '#2c3e50'}),
 
-                    html.Label('Temperatura T (°C)', style=SL),
-                    dcc.Slider(id='dt-T', min=550, max=650, step=25, value=650,
-                               marks={t: f'{t}' for t in [550, 575, 600, 625, 650]}),
-
-                    html.Label('H2 anodo (H2a)', style=SL),
-                    dcc.Slider(id='dt-H2a', min=0.5, max=4.5, step=0.1, value=2.2,
-                               marks={v: str(v) for v in [0.5, 1.5, 2.5, 3.5, 4.5]}),
-
-                    html.Label('H2O anodo (H2Oa)', style=SL),
-                    dcc.Slider(id='dt-H2Oa', min=0.05, max=1.3, step=0.05, value=0.41,
-                               marks={v: str(round(v, 2)) for v in [0.05, 0.5, 1.0, 1.3]}),
-
-                    html.Label('CO2 anodo (CO2a)', style=SL),
-                    dcc.Slider(id='dt-CO2a', min=0.05, max=1.1, step=0.05, value=0.55,
-                               marks={v: str(round(v, 2)) for v in [0.05, 0.3, 0.6, 1.1]}),
-
-                    html.Label('O2 catodo (O2c)', style=SL),
-                    dcc.Slider(id='dt-O2c', min=0.1, max=5.3, step=0.1, value=1.3,
-                               marks={v: str(v) for v in [0.1, 1.5, 3.0, 5.3]}),
-
-                    html.Label('CO2 catodo (CO2c)', style=SL),
-                    dcc.Slider(id='dt-CO2c', min=0.3, max=14.0, step=0.2, value=2.67,
-                               marks={v: str(v) for v in [0.3, 3.0, 7.0, 14.0]}),
-
-                    html.Label('N2 catodo (N2c)', style=SL),
-                    dcc.Slider(id='dt-N2c', min=0.5, max=29.0, step=0.5, value=4.87,
-                               marks={v: str(v) for v in [0.5, 5, 15, 29]}),
-
-                    html.Label('Resistencia ohmica r1 (Ohm·cm2)', style=SL),
-                    dcc.Slider(id='dt-r1', min=1.8, max=3.0, step=0.05, value=1.97,
-                               marks={v: str(round(v, 2)) for v in [1.8, 2.0, 2.5, 3.0]}),
-
+                    # ── Panel izquierdo: sliders + botones ────────
                     html.Div([
+                        html.H4("Condiciones de operacion",
+                                style={'fontFamily': 'Arial', 'color': '#2c3e50',
+                                       'marginBottom': '8px'}),
+
+                        html.Label('Temperatura T (°C)', style=SL),
+                        dcc.Slider(id='dt-T', min=550, max=650, step=25, value=650,
+                                   marks={t: f'{t}' for t in [550, 575, 600, 625, 650]}),
+
+                        html.Label('H2 anodo (H2a)', style=SL),
+                        dcc.Slider(id='dt-H2a', min=0.5, max=4.5, step=0.1, value=2.2,
+                                   marks={v: str(v) for v in [0.5, 1.5, 2.5, 3.5, 4.5]}),
+
+                        html.Label('H2O anodo (H2Oa)', style=SL),
+                        dcc.Slider(id='dt-H2Oa', min=0.05, max=1.3, step=0.05, value=0.41,
+                                   marks={v: str(round(v, 2)) for v in [0.05, 0.5, 1.0, 1.3]}),
+
+                        html.Label('CO2 anodo (CO2a)', style=SL),
+                        dcc.Slider(id='dt-CO2a', min=0.05, max=1.1, step=0.05, value=0.55,
+                                   marks={v: str(round(v, 2)) for v in [0.05, 0.3, 0.6, 1.1]}),
+
+                        html.Label('O2 catodo (O2c)', style=SL),
+                        dcc.Slider(id='dt-O2c', min=0.1, max=5.3, step=0.1, value=1.3,
+                                   marks={v: str(v) for v in [0.1, 1.5, 3.0, 5.3]}),
+
+                        html.Label('CO2 catodo (CO2c)', style=SL),
+                        dcc.Slider(id='dt-CO2c', min=0.3, max=14.0, step=0.2, value=2.67,
+                                   marks={v: str(v) for v in [0.3, 3.0, 7.0, 14.0]}),
+
+                        html.Label('N2 catodo (N2c)', style=SL),
+                        dcc.Slider(id='dt-N2c', min=0.5, max=29.0, step=0.5, value=4.87,
+                                   marks={v: str(v) for v in [0.5, 5, 15, 29]}),
+
+                        html.Label('Resistencia ohmica r1 (Ohm·cm2)', style=SL),
+                        dcc.Slider(id='dt-r1', min=1.8, max=3.0, step=0.05, value=1.97,
+                                   marks={v: str(round(v, 2)) for v in [1.8, 2.0, 2.5, 3.0]}),
+
+                        html.Label('Densidad de corriente de operacion i (A/cm²)', style=SL),
+                        dcc.Slider(id='dt-corriente', min=0.005, max=0.200, step=0.005, value=0.100,
+                                   marks={v: str(round(v, 3)) for v in [0.005, 0.05, 0.10, 0.15, 0.200]}),
+
+                        # Botones simulacion
+                        html.Div([
+                            html.Button(
+                                '▶  Iniciar Simulacion',
+                                id='btn-iniciar-sim',
+                                n_clicks=0,
+                                style={
+                                    'marginTop': '20px', 'width': '100%',
+                                    'padding': '10px',
+                                    'backgroundColor': '#27ae60',
+                                    'color': 'white', 'border': 'none',
+                                    'borderRadius': '6px', 'fontFamily': 'Arial',
+                                    'fontSize': '13px', 'cursor': 'pointer',
+                                    'fontWeight': 'bold'
+                                }
+                            ),
+                            html.Button(
+                                '■  Detener',
+                                id='btn-detener-sim',
+                                n_clicks=0,
+                                style={
+                                    'marginTop': '8px', 'width': '100%',
+                                    'padding': '10px',
+                                    'backgroundColor': '#e74c3c',
+                                    'color': 'white', 'border': 'none',
+                                    'borderRadius': '6px', 'fontFamily': 'Arial',
+                                    'fontSize': '13px', 'cursor': 'pointer',
+                                    'fontWeight': 'bold'
+                                }
+                            ),
+                        ]),
+
+                        # Estado simulador
+                        html.Div(id='sim-status', style={
+                            'fontFamily': 'Arial', 'fontSize': '12px',
+                            'marginTop': '10px', 'textAlign': 'center',
+                            'padding': '8px', 'borderRadius': '6px',
+                            'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'
+                        }),
+
+                        # Boton cargar experimento cercano
                         html.Button(
                             'Cargar experimento mas cercano',
                             id='btn-cargar-exp',
                             n_clicks=0,
                             style={
-                                'marginTop': '20px',
-                                'width': '100%',
+                                'marginTop': '16px', 'width': '100%',
                                 'padding': '10px',
                                 'backgroundColor': '#2980b9',
-                                'color': 'white',
-                                'border': 'none',
-                                'borderRadius': '6px',
-                                'fontFamily': 'Arial',
-                                'fontSize': '13px',
-                                'cursor': 'pointer',
+                                'color': 'white', 'border': 'none',
+                                'borderRadius': '6px', 'fontFamily': 'Arial',
+                                'fontSize': '13px', 'cursor': 'pointer',
                                 'fontWeight': 'bold'
                             }
                         ),
@@ -253,34 +315,71 @@ app.layout = html.Div([
                             'fontFamily': 'Arial', 'fontSize': '12px',
                             'color': '#27ae60', 'marginTop': '6px',
                             'textAlign': 'center'
-                        })
-                    ]),
+                        }),
 
-                ], style={**SP, 'width': '30%'}),
+                    ], style={**SP, 'width': '28%'}),
 
-                html.Div([
-                    dcc.Graph(id='dt-graph', style={'height': '420px'}),
-                    html.Div(id='dt-metricas', style={
-                        'fontFamily': 'Arial', 'fontSize': '14px',
-                        'backgroundColor': '#f0f4f8', 'borderRadius': '8px',
-                        'padding': '16px', 'marginTop': '12px'
-                    })
-                ], style={**SG, 'width': '68%'})
+                    # ── Panel derecho: curva DT + visor variables ──
+                    html.Div([
 
-            ])
+                        # Curva DT
+                        html.Div([
+                            dcc.Graph(id='dt-graph', style={'height': '360px'}),
+                            html.Div(id='dt-metricas', style={
+                                'fontFamily': 'Arial', 'fontSize': '14px',
+                                'backgroundColor': '#f0f4f8', 'borderRadius': '8px',
+                                'padding': '16px', 'marginTop': '8px'
+                            })
+                        ], style=CARD_STYLE),
+
+                        # ── Visor de variables en tiempo real ─────
+                        html.Div([
+                            html.H4("Variables en tiempo real",
+                                    style={'fontFamily': 'Arial', 'color': '#2c3e50',
+                                           'marginBottom': '12px'}),
+
+                            # KPIs instantaneos
+                            html.Div(id='sim-kpis', style={
+                                'display': 'flex', 'gap': '10px',
+                                'flexWrap': 'nowrap', 'marginBottom': '12px'
+                            }),
+
+                            # Graficos voltaje y potencia en tiempo real
+                            html.Div([
+                                html.Div([
+                                    dcc.Graph(id='sim-voltaje-graph',
+                                              style={'height': '220px'})
+                                ], style={'width': '49%', 'display': 'inline-block'}),
+                                html.Div([
+                                    dcc.Graph(id='sim-potencia-graph',
+                                              style={'height': '220px'})
+                                ], style={'width': '49%', 'display': 'inline-block',
+                                          'marginLeft': '2%'}),
+                            ]),
+
+                            # Tabla de mediciones recientes
+                            html.Div([
+                                html.H5("Ultimas mediciones",
+                                        style={'fontFamily': 'Arial',
+                                               'color': '#555', 'marginBottom': '8px'}),
+                                html.Div(id='sim-tabla-mediciones')
+                            ], style={'marginTop': '12px'})
+
+                        ], style=CARD_STYLE),
+
+                    ], style={'width': '70%', 'display': 'inline-block',
+                              'verticalAlign': 'top', 'paddingLeft': '16px'})
+
+                ], style={'display': 'flex', 'alignItems': 'flex-start'})
+
+            ], style={'padding': '20px'})
         ]),
 
-        # ── TAB 5: Monitoreo Live ──────────────────────────────
+        # ── TAB 5: Monitoreo Live ──────────────────────────────────
         dcc.Tab(label='Monitoreo Live', children=[
             html.Div([
-
-                # Intervalo de autorefresh (10 segundos)
                 dcc.Interval(id='live-interval', interval=10_000, n_intervals=0),
-
-                # Fila superior: selector + indicadores
                 html.Div([
-
-                    # Panel izquierdo: selector de experimento
                     html.Div([
                         html.H4("Sesión activa",
                                 style={'fontFamily': 'Arial', 'color': '#2c3e50',
@@ -305,8 +404,6 @@ app.layout = html.Div([
                                              'fontSize': '12px', 'color': '#27ae60'})
                         ], style={'marginTop': '12px'}),
                     ], style={**SP, 'width': '26%'}),
-
-                    # Panel derecho: KPIs en tiempo real
                     html.Div([
                         html.H4("Última medición",
                                 style={'fontFamily': 'Arial', 'color': '#2c3e50',
@@ -314,11 +411,8 @@ app.layout = html.Div([
                         html.Div(id='live-kpis')
                     ], style={'width': '70%', 'display': 'inline-block',
                               'verticalAlign': 'top', 'padding': '20px'})
-
                 ], style={'display': 'flex', 'alignItems': 'flex-start',
                           'marginBottom': '16px'}),
-
-                # Gráficos en tiempo real
                 html.Div([
                     html.Div([
                         dcc.Graph(id='live-voltaje', style={'height': '280px'})
@@ -331,7 +425,6 @@ app.layout = html.Div([
                 html.Div([
                     dcc.Graph(id='live-polar', style={'height': '320px'})
                 ], style={'marginTop': '10px'})
-
             ], style={'padding': '20px'})
         ]),
 
@@ -339,8 +432,7 @@ app.layout = html.Div([
 ], style={'maxWidth': '1200px', 'margin': 'auto', 'padding': '20px'})
 
 
-# ── Callbacks ──────────────────────────────────────────────────────────────────
-
+# ── Callbacks Tab 1 ────────────────────────────────────────────────────────────
 @app.callback(
     Output('polar-graph', 'figure'),
     Input('temp-filter', 'value'),
@@ -351,16 +443,13 @@ def update_polar(temps_sel, n_curvas, show_power):
     fig = go.Figure()
     if not temps_sel:
         return fig
-
     mostrar_p = 'power' in (show_power or [])
     subset = df[df['T'].isin(temps_sel)]
     ids = subset['id_experimento'].unique()[:n_curvas]
-
     for exp_id in ids:
         curva = subset[subset['id_experimento'] == exp_id].sort_values('i_densidad')
         t_val = int(curva['T'].iloc[0])
         nombre = f'Exp {exp_id} ({t_val}°C)'
-
         fig.add_trace(go.Scatter(
             x=curva['i_densidad'], y=curva['voltaje'],
             mode='lines+markers', name=nombre,
@@ -373,7 +462,6 @@ def update_polar(temps_sel, n_curvas, show_power):
                 mode='lines', name=f'P — {nombre}',
                 line=dict(dash='dash'), yaxis='y2'
             ))
-
     layout = dict(
         title='Curvas de Polarizacion' + (' y Potencia' if mostrar_p else ' (V vs i)'),
         xaxis_title='Densidad de corriente i [A/cm2]',
@@ -388,30 +476,149 @@ def update_polar(temps_sel, n_curvas, show_power):
     return fig
 
 
+# ── Callback Tab 2 ─────────────────────────────────────────────────────────────
 @app.callback(
     Output('var-graph', 'figure'),
     Input('var-selector', 'value')
 )
-def update_var(variable):
-    resumen = df.drop_duplicates('id_experimento')[
-        ['id_experimento', 'T', variable, 'E_max']
-    ].dropna()
+def update_var(var):
+    fig = go.Figure()
+    if not var:
+        return fig
+    summary = df.groupby(['id_experimento', var, 'T'])['voltaje'].max().reset_index()
+    summary.columns = ['id_experimento', 'var_val', 'T', 'E_max']
     fig = px.scatter(
-        resumen, x=variable, y='E_max', color='T',
-        color_continuous_scale='plasma',
-        labels={variable: variable, 'E_max': 'Voltaje maximo E_max [V]',
-                'T': 'Temperatura (°C)'},
-        title=f'Efecto de {variable} sobre el voltaje maximo',
-        template='plotly_white'
+        summary, x='var_val', y='E_max', color='T',
+        labels={'var_val': var, 'E_max': 'Voltaje maximo E_max [V]', 'T': 'T (°C)'},
+        title=f'Efecto de {var} sobre E_max',
+        template='plotly_white', color_continuous_scale='RdYlGn'
     )
-    fig.update_traces(marker=dict(size=8, opacity=0.8))
+    fig.update_traces(marker=dict(size=9))
     fig.update_layout(font=dict(family='Arial'))
     return fig
 
 
+# ── Callbacks Tab 4: Digital Twin con simulacion ───────────────────────────────
+
+# Iniciar / Detener simulador
 @app.callback(
-    Output('dt-graph', 'figure'),
-    Output('dt-metricas', 'children'),
+    Output('dt-sim-interval', 'disabled'),
+    Output('dt-sim-exp-id',   'data'),
+    Output('sim-status',      'children'),
+    Output('sim-status',      'style'),
+    Input('btn-iniciar-sim',  'n_clicks'),
+    Input('btn-detener-sim',  'n_clicks'),
+    State('dt-T',    'value'),
+    State('dt-H2a',  'value'),
+    State('dt-H2Oa', 'value'),
+    State('dt-CO2a', 'value'),
+    State('dt-O2c',  'value'),
+    State('dt-CO2c', 'value'),
+    State('dt-N2c',  'value'),
+    State('dt-r1',   'value'),
+    State('dt-corriente', 'value'),
+    State('dt-sim-exp-id', 'data'),
+    prevent_initial_call=True
+)
+def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, exp_id_actual):
+    global _sim_process
+
+    from dash import ctx
+    triggered = ctx.triggered_id
+
+    status_base = {
+        'fontFamily': 'Arial', 'fontSize': '12px',
+        'marginTop': '10px', 'textAlign': 'center',
+        'padding': '8px', 'borderRadius': '6px',
+    }
+
+    if triggered == 'btn-iniciar-sim':
+        # Detener proceso anterior si existe
+        if _sim_process and _sim_process.poll() is None:
+            try:
+                os.killpg(os.getpgid(_sim_process.pid), signal.SIGTERM)
+            except Exception:
+                pass
+
+        # Lanzar simulador con los parametros definidos
+        # Dashboard en .../Dashboard/ — simulador en .../simulador/ (un nivel arriba)
+        _dashboard_dir = os.path.dirname(os.path.abspath(__file__))
+        sim_path = os.path.normpath(
+            os.path.join(_dashboard_dir, '..', 'simulador', 'simulador_mcfc.py')
+        )
+        cmd = [
+            'python3', sim_path,
+            '--modo',        'continuo',
+            '--temperatura', str(int(T)),
+            '--h2a',   str(H2a),
+            '--h2oa',  str(H2Oa),
+            '--co2a',  str(CO2a),
+            '--o2c',   str(O2c),
+            '--co2c',  str(CO2c),
+            '--n2c',   str(N2c),
+            '--r1',    str(r1),
+            '--corriente', str(corriente),
+            '--intervalo', '3'
+        ]
+        try:
+            import time as _time
+            t_inicio = datetime.now(timezone.utc)
+            # Redirigir stderr a log para diagnóstico
+            import tempfile
+            _log = open('/tmp/simulador_mcfc.log', 'w')
+            _sim_process = subprocess.Popen(
+                cmd, stdout=_log,
+                stderr=_log,
+                preexec_fn=os.setsid
+            )
+            # Esperar activamente hasta que aparezca un experimento creado DESPUES del inicio
+            new_exp_id = None
+            for _ in range(15):          # hasta ~15 s
+                _time.sleep(1)
+                try:
+                    conn = psycopg2.connect(**DB_CONFIG)
+                    row = pd.read_sql(
+                        "SELECT id_experimento FROM experimentos "
+                        "WHERE fuente='udec_lab' AND created_at >= %s "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        conn, params=(t_inicio,)
+                    )
+                    conn.close()
+                    if not row.empty:
+                        new_exp_id = int(row['id_experimento'].iloc[0])
+                        break
+                except Exception:
+                    pass
+            style = {**status_base, 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
+            label = (f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
+                     if new_exp_id else f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | exp pendiente')
+            return False, new_exp_id, label, style
+        except Exception as ex:
+            style = {**status_base, 'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
+            return True, None, f'Error al iniciar: {str(ex)[:60]}', style
+
+    elif triggered == 'btn-detener-sim':
+        if _sim_process and _sim_process.poll() is None:
+            try:
+                os.killpg(os.getpgid(_sim_process.pid), signal.SIGTERM)
+            except Exception:
+                pass
+        style = {**status_base, 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
+        return True, None, '■ Simulacion detenida', style
+
+    style = {**status_base, 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
+    return True, None, 'Sin simulacion activa', style
+
+
+# Actualizar curva DT + visor de variables en tiempo real
+@app.callback(
+    Output('dt-graph',            'figure'),
+    Output('dt-metricas',         'children'),
+    Output('sim-kpis',            'children'),
+    Output('sim-voltaje-graph',   'figure'),
+    Output('sim-potencia-graph',  'figure'),
+    Output('sim-tabla-mediciones','children'),
+    Input('dt-sim-interval', 'n_intervals'),
     Input('dt-T',    'value'),
     Input('dt-H2a',  'value'),
     Input('dt-H2Oa', 'value'),
@@ -420,133 +627,206 @@ def update_var(variable):
     Input('dt-CO2c', 'value'),
     Input('dt-N2c',  'value'),
     Input('dt-r1',   'value'),
+    Input('dt-sim-exp-id', 'data'),   # Input (no State) → dispara al cambiar exp_id
 )
-def update_dt(T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1):
-    fig = go.Figure()
+def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim):
 
-    i_pred = np.linspace(0, 0.30, 120)
-
-    V_pred = voltaje_modelo(i_pred, T, H2a, H2Oa, CO2a, O2c, CO2c, r1, N2c=N2c)
-    P_pred = V_pred * i_pred
-
-    fig.add_trace(go.Scatter(
-        x=i_pred, y=V_pred, mode='lines',
-        name=f'Modelo libre (r1={r1:.2f})',
-        line=dict(color='#e74c3c', width=2, dash='dot'), yaxis='y1'
-    ))
-    fig.add_trace(go.Scatter(
-        x=i_pred, y=P_pred, mode='lines',
-        name='P modelo libre',
-        line=dict(color='#e74c3c', width=1.5, dash='dot'), yaxis='y2'
-    ))
-
-    tol_T = 13
-    cands = exp_summary[abs(exp_summary['T'] - T) <= tol_T].copy()
-    metricas_out = html.P("No hay experimentos cercanos para comparar.",
-                          style={'color': '#888'})
-
-    if len(cands) > 0:
-        ref = np.array([H2a, H2Oa, CO2a, O2c, CO2c, N2c])
-        cands = cands.copy()
-        cands['dist'] = cands[['H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c']].apply(
-            lambda row: np.linalg.norm(row.values - ref), axis=1
-        )
-        mejor = cands.sort_values('dist').iloc[0]
-        eid   = int(mejor['id_experimento'])
-        r1_real = float(mejor['r_1'])
-
-        datos_exp = df[df['id_experimento'] == eid].sort_values('i_densidad')
-        i_exp = datos_exp['i_densidad'].values
-        V_exp = datos_exp['voltaje'].values
-
-        V_ajustado = voltaje_modelo(
-            i_pred, mejor['T'], mejor['H2a'], mejor['H2Oa'],
-            mejor['CO2a'], mejor['O2c'], mejor['CO2c'], r1_real,
-            N2a=mejor.get('N2a', 0), CO=mejor.get('CO', 0),
-            CH4=mejor.get('CH4', 0), N2c=mejor['N2c'], H2Oc=mejor.get('H2Oc', 0)
-        )
-        fig.add_trace(go.Scatter(
-            x=i_pred, y=V_ajustado, mode='lines',
-            name=f'Modelo ajustado (r1={r1_real:.3f})',
-            line=dict(color='#27ae60', width=2.5), yaxis='y1'
-        ))
-        fig.add_trace(go.Scatter(
-            x=i_pred, y=V_ajustado * i_pred, mode='lines',
-            name='P modelo ajustado',
-            line=dict(color='#27ae60', width=2, dash='dash'), yaxis='y2'
-        ))
-
-        V_mod = voltaje_modelo(
-            i_exp, mejor['T'], mejor['H2a'], mejor['H2Oa'],
-            mejor['CO2a'], mejor['O2c'], mejor['CO2c'], r1_real,
-            N2a=mejor.get('N2a', 0), CO=mejor.get('CO', 0),
-            CH4=mejor.get('CH4', 0), N2c=mejor['N2c'], H2Oc=mejor.get('H2Oc', 0)
-        )
-
-        r2, mae, nrmse = metricas(V_exp, V_mod)
-
-        fig.add_trace(go.Scatter(
-            x=i_exp, y=V_exp, mode='markers',
-            name=f'Exp {eid} (T={int(mejor["T"])}°C)',
-            marker=dict(color='#2980b9', size=7), yaxis='y1'
-        ))
-        fig.add_trace(go.Scatter(
-            x=i_exp, y=V_exp * i_exp, mode='markers',
-            name=f'P exp {eid}',
-            marker=dict(color='#2980b9', size=6, symbol='diamond'), yaxis='y2'
-        ))
-
-        def color_m(val, bueno, malo, inv=False):
-            if not inv:
-                return '#27ae60' if val >= bueno else ('#e67e22' if val >= malo else '#e74c3c')
-            return '#27ae60' if val <= bueno else ('#e67e22' if val <= malo else '#e74c3c')
-
-        card = {'display': 'inline-block', 'textAlign': 'center', 'width': '30%',
-                'padding': '12px', 'backgroundColor': 'white', 'borderRadius': '8px',
-                'boxShadow': '0 1px 4px #ccc', 'marginRight': '10px'}
-
-        metricas_out = html.Div([
-            html.H4("Evaluacion del modelo vs. experimento mas cercano",
-                    style={'color': '#2c3e50', 'marginBottom': '8px'}),
-            html.P(
-                f"Referencia: ID {eid} | T={int(mejor['T'])}°C | "
-                f"dist. composicion = {mejor['dist']:.3f}",
-                style={'color': '#555', 'marginBottom': '12px'}
-            ),
-            html.Div([
-                html.Div([
-                    html.Div("R²", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
-                    html.Div(f"{r2:.4f}",
-                             style={'fontSize': '24px', 'color': color_m(r2, 0.95, 0.85)})
-                ], style=card),
-                html.Div([
-                    html.Div("MAE [V]", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
-                    html.Div(f"{mae:.4f}",
-                             style={'fontSize': '24px',
-                                    'color': color_m(mae, 0.02, 0.05, inv=True)})
-                ], style=card),
-                html.Div([
-                    html.Div("NRMSE", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
-                    html.Div(f"{nrmse:.4f}",
-                             style={'fontSize': '24px',
-                                    'color': color_m(nrmse, 0.05, 0.10, inv=True)})
-                ], style={**card, 'marginRight': '0'})
-            ])
-        ])
-
-    fig.update_layout(
-        title=f'Digital Twin — T={T}°C',
-        xaxis_title='Densidad de corriente i [A/cm2]',
-        yaxis=dict(title='Voltaje E [V]', side='left'),
-        yaxis2=dict(title='Potencia P [W/cm2]', overlaying='y',
-                    side='right', showgrid=False),
-        hovermode='x unified', template='plotly_white',
-        font=dict(family='Arial'), legend=dict(orientation='h', y=-0.22)
+    fig_empty = go.Figure()
+    fig_empty.update_layout(
+        template='plotly_white', font=dict(family='Arial'),
+        annotations=[dict(text='Inicia la simulacion para ver datos',
+                         showarrow=False, font=dict(size=13, color='#aaa'),
+                         xref='paper', yref='paper', x=0.5, y=0.5)]
     )
 
-    return fig, metricas_out
+    card_kpi = {
+        'display': 'inline-block', 'textAlign': 'center',
+        'width': '22%', 'padding': '12px',
+        'backgroundColor': 'white', 'borderRadius': '10px',
+        'boxShadow': '0 2px 6px rgba(0,0,0,0.08)',
+    }
+
+    def kpi(titulo, valor, unidad, color='#2c3e50'):
+        return html.Div([
+            html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '11px',
+                                    'color': '#7f8c8d', 'marginBottom': '4px'}),
+            html.Div(valor,  style={'fontSize': '22px', 'fontWeight': 'bold',
+                                    'color': color}),
+            html.Div(unidad, style={'fontSize': '10px', 'color': '#aaa'}),
+        ], style=card_kpi)
+
+    # ── Curva DT estática (responde a sliders siempre) ─────────────────────────
+    i_range = np.linspace(0.005, 0.25, 100)
+    V_dt = voltaje_modelo(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, r1)
+    P_dt = V_dt * i_range
+
+    fig_dt = go.Figure()
+    fig_dt.add_trace(go.Scatter(
+        x=i_range, y=V_dt, mode='lines',
+        line=dict(color='#e74c3c', width=2.5, dash='dot'),
+        name='Modelo DT', yaxis='y1'
+    ))
+    fig_dt.add_trace(go.Scatter(
+        x=i_range, y=P_dt, mode='lines',
+        line=dict(color='#8e44ad', width=2, dash='dash'),
+        name='P modelo DT', yaxis='y2'
+    ))
+
+    metricas_out = html.P("Ajusta los sliders para ver la curva del modelo DT.",
+                          style={'color': '#888', 'fontFamily': 'Arial'})
+    kpis_out = []
+    fig_v = fig_empty
+    fig_p = fig_empty
+    tabla_out = html.P("Sin mediciones aún.", style={'color': '#aaa', 'fontFamily': 'Arial'})
+
+    # ── Si hay simulacion activa, cargar mediciones reales ─────────────────────
+    if exp_id_sim is not None:
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            df_m = pd.read_sql("""
+                SELECT id_medicion, i_densidad, voltaje, eta, timestamp_medicion
+                FROM mediciones
+                WHERE id_experimento = %s
+                ORDER BY timestamp_medicion ASC
+            """, conn, params=(exp_id_sim,))
+            conn.close()
+
+            if not df_m.empty:
+                # Superponer datos reales en curva DT
+                fig_dt.add_trace(go.Scatter(
+                    x=df_m['i_densidad'], y=df_m['voltaje'],
+                    mode='markers', name='Datos simulados',
+                    marker=dict(color='#27ae60', size=8), yaxis='y1'
+                ))
+
+                # Metricas si hay suficientes puntos
+                if len(df_m) >= 3:
+                    V_pred = voltaje_modelo(
+                        df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, r1
+                    )
+                    r2, mae, nrmse = metricas(df_m['voltaje'].values, V_pred)
+
+                    def color_m(val, bueno, malo, inv=False):
+                        if not inv:
+                            return '#27ae60' if val >= bueno else ('#e67e22' if val >= malo else '#e74c3c')
+                        return '#27ae60' if val <= bueno else ('#e67e22' if val <= malo else '#e74c3c')
+
+                    card = {'display': 'inline-block', 'textAlign': 'center', 'width': '30%',
+                            'padding': '12px', 'backgroundColor': 'white', 'borderRadius': '8px',
+                            'boxShadow': '0 1px 4px #ccc', 'marginRight': '10px'}
+
+                    metricas_out = html.Div([
+                        html.H4(f"Evaluacion del modelo — Exp {exp_id_sim}",
+                                style={'color': '#2c3e50', 'marginBottom': '8px',
+                                       'fontFamily': 'Arial'}),
+                        html.Div([
+                            html.Div([
+                                html.Div("R²", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
+                                html.Div(f"{r2:.4f}",
+                                         style={'fontSize': '24px',
+                                                'color': color_m(r2, 0.95, 0.85)})
+                            ], style=card),
+                            html.Div([
+                                html.Div("MAE [V]", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
+                                html.Div(f"{mae:.4f}",
+                                         style={'fontSize': '24px',
+                                                'color': color_m(mae, 0.02, 0.05, inv=True)})
+                            ], style=card),
+                            html.Div([
+                                html.Div("NRMSE", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
+                                html.Div(f"{nrmse:.4f}",
+                                         style={'fontSize': '24px',
+                                                'color': color_m(nrmse, 0.05, 0.10, inv=True)})
+                            ], style={**card, 'marginRight': '0'})
+                        ])
+                    ])
+
+                # KPIs ultima medicion
+                ultima = df_m.iloc[-1]
+                V_u = float(ultima['voltaje'])
+                i_u = float(ultima['i_densidad'])
+                P_u = V_u * i_u
+                eta_u = float(ultima['eta']) if ultima['eta'] else 0.0
+                kpis_out = [
+                    kpi("Voltaje",     f"{V_u:.4f}", "V",      '#27ae60'),
+                    kpi("Corriente",   f"{i_u:.4f}", "A/cm²",  '#2980b9'),
+                    kpi("Potencia",    f"{P_u:.4f}", "W/cm²",  '#8e44ad'),
+                    kpi("Eficiencia η",f"{eta_u:.3f}", "—",    '#16a085'),
+                ]
+
+                # Grafico voltaje vs tiempo
+                fig_v = go.Figure()
+                fig_v.add_trace(go.Scatter(
+                    x=df_m['timestamp_medicion'], y=df_m['voltaje'],
+                    mode='lines+markers',
+                    line=dict(color='#27ae60', width=2),
+                    marker=dict(size=5), name='Voltaje'
+                ))
+                fig_v.update_layout(
+                    title='Voltaje E [V]',
+                    xaxis_title='Tiempo', yaxis_title='E [V]',
+                    template='plotly_white', font=dict(family='Arial'),
+                    margin=dict(t=35, b=40, l=50, r=20)
+                )
+
+                # Grafico potencia vs tiempo
+                df_m['potencia'] = df_m['voltaje'] * df_m['i_densidad']
+                fig_p = go.Figure()
+                fig_p.add_trace(go.Scatter(
+                    x=df_m['timestamp_medicion'], y=df_m['potencia'],
+                    mode='lines+markers',
+                    line=dict(color='#8e44ad', width=2),
+                    marker=dict(size=5), name='Potencia'
+                ))
+                fig_p.update_layout(
+                    title='Potencia P [W/cm²]',
+                    xaxis_title='Tiempo', yaxis_title='P [W/cm²]',
+                    template='plotly_white', font=dict(family='Arial'),
+                    margin=dict(t=35, b=40, l=50, r=20)
+                )
+
+                # Tabla ultimas 10 mediciones
+                df_tabla = df_m.tail(10).copy()
+                df_tabla['potencia'] = (df_tabla['voltaje'] * df_tabla['i_densidad']).round(5)
+                df_tabla['voltaje']    = df_tabla['voltaje'].round(4)
+                df_tabla['i_densidad'] = df_tabla['i_densidad'].round(4)
+                df_tabla['eta']        = df_tabla['eta'].round(4)
+                df_tabla['timestamp_medicion'] = df_tabla['timestamp_medicion'].astype(str).str[:19]
+                df_tabla = df_tabla[['timestamp_medicion','i_densidad','voltaje','potencia','eta']]
+                df_tabla.columns = ['Timestamp','i [A/cm²]','V [V]','P [W/cm²]','η']
+
+                tabla_out = dash_table.DataTable(
+                    data=df_tabla.to_dict('records'),
+                    columns=[{'name': c, 'id': c} for c in df_tabla.columns],
+                    style_table={'overflowX': 'auto'},
+                    style_header={'backgroundColor': '#2c3e50', 'color': 'white',
+                                  'fontWeight': 'bold', 'fontFamily': 'Arial',
+                                  'fontSize': '12px'},
+                    style_cell={'fontFamily': 'Arial', 'fontSize': '12px',
+                                'padding': '6px', 'textAlign': 'center'},
+                    style_data_conditional=[{
+                        'if': {'row_index': 'odd'}, 'backgroundColor': '#f8f9fa'
+                    }]
+                )
+
+        except Exception:
+            pass
+
+    fig_dt.update_layout(
+        title=f'Digital Twin — T={T}°C',
+        xaxis_title='Densidad de corriente i [A/cm²]',
+        yaxis=dict(title='Voltaje E [V]', side='left'),
+        yaxis2=dict(title='Potencia P [W/cm²]', overlaying='y',
+                    side='right', showgrid=False),
+        hovermode='x unified', template='plotly_white',
+        font=dict(family='Arial'),
+        legend=dict(orientation='h', y=-0.22)
+    )
+
+    return fig_dt, metricas_out, kpis_out, fig_v, fig_p, tabla_out
 
 
+# ── Callback: cargar experimento cercano ───────────────────────────────────────
 @app.callback(
     Output('dt-T',    'value'),
     Output('dt-H2a',  'value'),
@@ -573,14 +853,12 @@ def cargar_experimento_cercano(n_clicks, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
     cands = exp_summary[abs(exp_summary['T'] - T) <= tol_T].copy()
     if len(cands) == 0:
         return T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, 'Sin experimentos cercanos'
-
     ref = np.array([H2a, H2Oa, CO2a, O2c, CO2c, N2c])
     cands['dist'] = cands[['H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c']].apply(
         lambda row: np.linalg.norm(row.values - ref), axis=1
     )
     mejor = cands.sort_values('dist').iloc[0]
     eid   = int(mejor['id_experimento'])
-
     return (
         int(mejor['T']),
         round(float(mejor['H2a']),  3),
@@ -594,12 +872,8 @@ def cargar_experimento_cercano(n_clicks, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
     )
 
 
-
-
-# ── Helpers Live ───────────────────────────────────────────────────────────────
-
+# ── Helpers y Callbacks Tab 5: Monitoreo Live ──────────────────────────────────
 def get_experimentos_udec():
-    """Retorna lista de experimentos udec_lab ordenados por más reciente."""
     conn = psycopg2.connect(**DB_CONFIG)
     df_exp = pd.read_sql("""
         SELECT e.id_experimento, e.t, e.h2a, e.co2a, e.o2c, e.co2c,
@@ -617,7 +891,6 @@ def get_experimentos_udec():
 
 
 def get_mediciones_live(id_exp: int):
-    """Retorna todas las mediciones de un experimento ordenadas por timestamp."""
     conn = psycopg2.connect(**DB_CONFIG)
     df_m = pd.read_sql("""
         SELECT id_medicion, i_densidad, voltaje, eta, timestamp_medicion
@@ -629,7 +902,6 @@ def get_mediciones_live(id_exp: int):
     return df_m
 
 
-# ── Callback: actualizar selector de experimentos ──────────────────────────────
 @app.callback(
     Output('live-exp-selector', 'options'),
     Output('live-exp-selector', 'value'),
@@ -640,7 +912,6 @@ def actualizar_selector(n, current_val):
     df_exp = get_experimentos_udec()
     if df_exp.empty:
         return [], None
-
     options = [
         {
             'label': (f"Exp {row.id_experimento} | T={int(row.t)}°C | "
@@ -650,19 +921,13 @@ def actualizar_selector(n, current_val):
         }
         for row in df_exp.itertuples()
     ]
-
     ids_disponibles = [o['value'] for o in options]
-
-    # Siempre mostrar badge "ACTIVO" en el más reciente (primer elemento)
     if options:
         options[0]['label'] = "▶ " + options[0]['label']
-
-    # Mantener selección actual si sigue existiendo, sino auto-seleccionar el más reciente
     val = current_val if current_val in ids_disponibles else options[0]['value']
     return options, val
 
 
-# ── Callback: actualizar gráficos y KPIs ──────────────────────────────────────
 @app.callback(
     Output('live-voltaje',  'figure'),
     Output('live-potencia', 'figure'),
@@ -674,8 +939,6 @@ def actualizar_selector(n, current_val):
     Input('live-exp-selector',  'value'),
 )
 def actualizar_live(n, id_exp):
-
-    # Estilos tarjeta KPI
     card_base = {
         'display': 'inline-block', 'textAlign': 'center',
         'width': '22%', 'padding': '14px',
@@ -683,19 +946,15 @@ def actualizar_live(n, id_exp):
         'boxShadow': '0 2px 6px rgba(0,0,0,0.08)',
         'marginRight': '12px', 'verticalAlign': 'top'
     }
-
     fig_empty = go.Figure()
-    fig_empty.update_layout(template='plotly_white',
-                            font=dict(family='Arial'),
+    fig_empty.update_layout(template='plotly_white', font=dict(family='Arial'),
                             annotations=[dict(text='Sin datos', showarrow=False,
                                              font=dict(size=14, color='#aaa'),
                                              xref='paper', yref='paper', x=0.5, y=0.5)])
-
     if id_exp is None:
         return fig_empty, fig_empty, fig_empty, html.P("Sin experimento seleccionado."), "", "Esperando datos..."
 
     df_m = get_mediciones_live(id_exp)
-
     if df_m.empty:
         return fig_empty, fig_empty, fig_empty, \
                html.P("Sin mediciones aún.", style={'color': '#888'}), \
@@ -705,15 +964,12 @@ def actualizar_live(n, id_exp):
     n_med  = len(df_m)
     ts_str = str(ultima['timestamp_medicion'])[:19] if ultima['timestamp_medicion'] else '—'
 
-    # ── KPIs ──────────────────────────────────────────────────────────────────
     def kpi_card(titulo, valor, unidad, color='#2c3e50'):
         return html.Div([
             html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '12px',
                                     'color': '#7f8c8d', 'marginBottom': '6px'}),
-            html.Div(valor,  style={'fontSize': '26px', 'fontWeight': 'bold',
-                                    'color': color}),
-            html.Div(unidad, style={'fontSize': '11px', 'color': '#aaa',
-                                    'marginTop': '2px'}),
+            html.Div(valor,  style={'fontSize': '26px', 'fontWeight': 'bold', 'color': color}),
+            html.Div(unidad, style={'fontSize': '11px', 'color': '#aaa', 'marginTop': '2px'}),
         ], style=card_base)
 
     V_last   = float(ultima['voltaje'])
@@ -722,26 +978,19 @@ def actualizar_live(n, id_exp):
     eta_last = float(ultima['eta']) if ultima['eta'] else 0.0
 
     def color_v_relativo(v, i):
-        # Color dinámico: compara voltaje real vs esperado para esa densidad de corriente
         v_esperado = max(1.05 - 3.5 * i, 0.4)
         ratio = v / v_esperado if v_esperado > 0 else 1.0
-        if ratio >= 0.97:
-            return '#27ae60'   # verde: dentro del 3% del esperado
-        elif ratio >= 0.90:
-            return '#e67e22'   # naranjo: 90-97% del esperado
-        else:
-            return '#e74c3c'   # rojo: más del 10% bajo lo esperado
+        if ratio >= 0.97:   return '#27ae60'
+        elif ratio >= 0.90: return '#e67e22'
+        else:               return '#e74c3c'
 
     kpis = html.Div([
-        kpi_card("Voltaje",            f"{V_last:.4f}", "V",
-                 color_v_relativo(V_last, i_last)),
-        kpi_card("Densidad corriente", f"{i_last:.4f}", "A/cm²",  '#2980b9'),
-        kpi_card("Potencia",           f"{P_last:.4f}", "W/cm²",  '#8e44ad'),
-        kpi_card("Eficiencia η",  f"{eta_last:.3f}", "—",    '#16a085'),
-    ], style={'display': 'flex', 'flexWrap': 'nowrap', 'gap': '12px',
-              'alignItems': 'stretch'})
+        kpi_card("Voltaje",            f"{V_last:.4f}", "V",     color_v_relativo(V_last, i_last)),
+        kpi_card("Densidad corriente", f"{i_last:.4f}", "A/cm²", '#2980b9'),
+        kpi_card("Potencia",           f"{P_last:.4f}", "W/cm²", '#8e44ad'),
+        kpi_card("Eficiencia η",  f"{eta_last:.3f}", "—",   '#16a085'),
+    ], style={'display': 'flex', 'flexWrap': 'nowrap', 'gap': '12px', 'alignItems': 'stretch'})
 
-    # ── Info experimento ──────────────────────────────────────────────────────
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         row_exp = pd.read_sql(
@@ -750,11 +999,11 @@ def actualizar_live(n, id_exp):
         ).iloc[0]
         conn.close()
         info = html.Div([
-            html.Div(f"T = {int(row_exp.t)} °C",       style={'marginBottom': '3px'}),
-            html.Div(f"H2a = {row_exp.h2a:.3f}",       style={'marginBottom': '3px'}),
-            html.Div(f"CO2a = {row_exp.co2a:.3f}",     style={'marginBottom': '3px'}),
-            html.Div(f"O2c = {row_exp.o2c:.3f}",       style={'marginBottom': '3px'}),
-            html.Div(f"CO2c = {row_exp.co2c:.3f}",     style={'marginBottom': '3px'}),
+            html.Div(f"T = {int(row_exp.t)} °C",   style={'marginBottom': '3px'}),
+            html.Div(f"H2a = {row_exp.h2a:.3f}",   style={'marginBottom': '3px'}),
+            html.Div(f"CO2a = {row_exp.co2a:.3f}",  style={'marginBottom': '3px'}),
+            html.Div(f"O2c = {row_exp.o2c:.3f}",   style={'marginBottom': '3px'}),
+            html.Div(f"CO2c = {row_exp.co2c:.3f}",  style={'marginBottom': '3px'}),
             html.Div(f"Mediciones: {n_med}",
                      style={'marginTop': '8px', 'fontWeight': 'bold', 'color': '#2980b9'}),
             html.Div(f"Última: {ts_str}",
@@ -765,80 +1014,51 @@ def actualizar_live(n, id_exp):
 
     status = f"Actualizando... {n_med} mediciones recibidas"
 
-    # ── Figura: Voltaje vs tiempo ─────────────────────────────────────────────
     fig_v = go.Figure()
-    fig_v.add_trace(go.Scatter(
-        x=df_m['timestamp_medicion'], y=df_m['voltaje'],
-        mode='lines+markers',
-        line=dict(color='#2980b9', width=2),
-        marker=dict(size=6),
-        name='Voltaje'
-    ))
-    fig_v.update_layout(
-        title='Voltaje E [V] — tiempo real',
-        xaxis_title='Tiempo', yaxis_title='E [V]',
-        template='plotly_white', font=dict(family='Arial'),
-        margin=dict(t=40, b=40, l=50, r=20)
-    )
+    fig_v.add_trace(go.Scatter(x=df_m['timestamp_medicion'], y=df_m['voltaje'],
+                               mode='lines+markers', line=dict(color='#2980b9', width=2),
+                               marker=dict(size=6), name='Voltaje'))
+    fig_v.update_layout(title='Voltaje E [V] — tiempo real',
+                        xaxis_title='Tiempo', yaxis_title='E [V]',
+                        template='plotly_white', font=dict(family='Arial'),
+                        margin=dict(t=40, b=40, l=50, r=20))
 
-    # ── Figura: Potencia vs tiempo ────────────────────────────────────────────
     df_m['potencia'] = df_m['voltaje'] * df_m['i_densidad']
     fig_p = go.Figure()
-    fig_p.add_trace(go.Scatter(
-        x=df_m['timestamp_medicion'], y=df_m['potencia'],
-        mode='lines+markers',
-        line=dict(color='#8e44ad', width=2),
-        marker=dict(size=6),
-        name='Potencia'
-    ))
-    fig_p.update_layout(
-        title='Potencia P [W/cm²] — tiempo real',
-        xaxis_title='Tiempo', yaxis_title='P [W/cm²]',
-        template='plotly_white', font=dict(family='Arial'),
-        margin=dict(t=40, b=40, l=50, r=20)
-    )
+    fig_p.add_trace(go.Scatter(x=df_m['timestamp_medicion'], y=df_m['potencia'],
+                               mode='lines+markers', line=dict(color='#8e44ad', width=2),
+                               marker=dict(size=6), name='Potencia'))
+    fig_p.update_layout(title='Potencia P [W/cm²] — tiempo real',
+                        xaxis_title='Tiempo', yaxis_title='P [W/cm²]',
+                        template='plotly_white', font=dict(family='Arial'),
+                        margin=dict(t=40, b=40, l=50, r=20))
 
-    # ── Figura: Curva de polarización acumulada ───────────────────────────────
     fig_polar = go.Figure()
-    fig_polar.add_trace(go.Scatter(
-        x=df_m['i_densidad'], y=df_m['voltaje'],
-        mode='lines+markers',
-        line=dict(color='#27ae60', width=2),
-        marker=dict(size=7, color='#27ae60'),
-        name='Curva experimental'
-    ))
-    # Curva del modelo sobre los mismos puntos (si hay suficientes datos)
+    fig_polar.add_trace(go.Scatter(x=df_m['i_densidad'], y=df_m['voltaje'],
+                                   mode='lines+markers', line=dict(color='#27ae60', width=2),
+                                   marker=dict(size=7, color='#27ae60'),
+                                   name='Curva experimental'))
     if n_med >= 3:
         try:
             conn2 = psycopg2.connect(**DB_CONFIG)
             row_e = pd.read_sql(
                 "SELECT t, h2a, h2oa, co2a, o2c, co2c, n2c, h2oc, co, ch4 "
-                "FROM experimentos WHERE id_experimento=%s",
-                conn2, params=(id_exp,)
+                "FROM experimentos WHERE id_experimento=%s", conn2, params=(id_exp,)
             ).iloc[0]
-            # Buscar r1: primero en parametros_modelo, fallback a valor típico MCFC
             pm = pd.read_sql(
                 "SELECT r_1 FROM parametros_modelo WHERE id_experimento=%s LIMIT 1",
                 conn2, params=(id_exp,)
             )
             conn2.close()
-            if not pm.empty and pm['r_1'].iloc[0] is not None:
-                r1_val = float(pm['r_1'].iloc[0])
-            else:
-                # Fallback: valor típico MCFC a 650°C
-                r1_val = 1.973
+            r1_val = float(pm['r_1'].iloc[0]) if not pm.empty and pm['r_1'].iloc[0] is not None else 1.973
             i_range = np.linspace(0, df_m['i_densidad'].max() * 1.1, 80)
-            V_mod = voltaje_modelo(
-                i_range, float(row_e.t), float(row_e.h2a), float(row_e.h2oa),
-                float(row_e.co2a), float(row_e.o2c), float(row_e.co2c), r1_val,
-                N2a=float(row_e.co), CO=float(row_e.co), CH4=float(row_e.ch4),
-                N2c=float(row_e.n2c), H2Oc=float(row_e.h2oc)
-            )
-            fig_polar.add_trace(go.Scatter(
-                x=i_range, y=V_mod, mode='lines',
-                line=dict(color='#e74c3c', width=2, dash='dot'),
-                name='Modelo DT'
-            ))
+            V_mod = voltaje_modelo(i_range, float(row_e.t), float(row_e.h2a), float(row_e.h2oa),
+                                   float(row_e.co2a), float(row_e.o2c), float(row_e.co2c), r1_val,
+                                   N2a=float(row_e.co), CO=float(row_e.co), CH4=float(row_e.ch4),
+                                   N2c=float(row_e.n2c), H2Oc=float(row_e.h2oc))
+            fig_polar.add_trace(go.Scatter(x=i_range, y=V_mod, mode='lines',
+                                           line=dict(color='#e74c3c', width=2, dash='dot'),
+                                           name='Modelo DT'))
         except Exception:
             pass
 
@@ -847,8 +1067,7 @@ def actualizar_live(n, id_exp):
         xaxis_title='Densidad de corriente i [A/cm²]',
         yaxis_title='Voltaje E [V]',
         template='plotly_white', font=dict(family='Arial'),
-        hovermode='x unified',
-        margin=dict(t=40, b=50, l=50, r=20),
+        hovermode='x unified', margin=dict(t=40, b=50, l=50, r=20),
         legend=dict(orientation='h', y=-0.2)
     )
 
