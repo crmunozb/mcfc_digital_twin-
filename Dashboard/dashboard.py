@@ -63,6 +63,7 @@ def get_data():
     conn = psycopg2.connect(**DB_CONFIG)
     df = pd.read_sql('''
         SELECT e.id_experimento,
+               e.fuente,
                e.t    AS "T",
                e.h2a  AS "H2a",  e.h2oa AS "H2Oa", e.co2a AS "CO2a",
                e.n2a  AS "N2a",  e.co   AS "CO",   e.ch4  AS "CH4",
@@ -81,7 +82,7 @@ def get_data():
 df = get_data()
 temps = sorted(df['T'].unique())
 exp_summary = df.drop_duplicates('id_experimento')[
-    ['id_experimento', 'T',
+    ['id_experimento', 'fuente', 'T',
      'H2a', 'H2Oa', 'CO2a', 'N2a', 'CO', 'CH4',
      'O2c', 'CO2c', 'N2c', 'H2Oc',
      'E_max', 'i_max', 'r_1', 'r_2']
@@ -171,10 +172,63 @@ app.layout = html.Div([
         # ── TAB 3: Tabla de experimentos ───────────────────────────
         dcc.Tab(label='Experimentos', children=[
             html.Div([
+                # Filtros superiores
+                html.Div([
+                    html.Div([
+                        html.Label('Fuente de datos', style=SL),
+                        dcc.Dropdown(
+                            id='exp-fuente-filter',
+                            options=[
+                                {'label': 'Todas las fuentes',   'value': 'todas'},
+                                {'label': 'Warsaw (Polonia)',     'value': 'warsaw_ut'},
+                                {'label': 'Simulador UdeC',      'value': 'udec_lab'},
+                                {'label': 'Laboratorio UdeC',    'value': 'udec_real'},
+                            ],
+                            value='todas', clearable=False,
+                            style={'fontFamily': 'Arial', 'width': '220px'}
+                        ),
+                    ], style={'display': 'inline-block', 'marginRight': '20px'}),
+                    html.Div([
+                        html.Label('Temperatura (°C)', style=SL),
+                        dcc.Dropdown(
+                            id='exp-temp-filter',
+                            options=[{'label': 'Todas', 'value': 'todas'}] +
+                                    [{'label': f'{t}°C', 'value': t}
+                                     for t in sorted(df['T'].unique())],
+                            value='todas', clearable=False,
+                            style={'fontFamily': 'Arial', 'width': '160px'}
+                        ),
+                    ], style={'display': 'inline-block', 'marginRight': '20px'}),
+                    html.Div([
+                        html.Label('Experimentos por página', style=SL),
+                        dcc.Dropdown(
+                            id='exp-pagesize',
+                            options=[
+                                {'label': '20',   'value': 20},
+                                {'label': '50',   'value': 50},
+                                {'label': '100',  'value': 100},
+                                {'label': 'Todos','value': 9999},
+                            ],
+                            value=20, clearable=False,
+                            style={'fontFamily': 'Arial', 'width': '160px'}
+                        ),
+                    ], style={'display': 'inline-block'}),
+                ], style={'padding': '16px 20px 8px 20px',
+                          'backgroundColor': '#f8f9fa', 'borderRadius': '8px',
+                          'margin': '16px 20px 8px 20px'}),
+
+                # Contador
+                html.Div(id='exp-contador', style={
+                    'fontFamily': 'Arial', 'fontSize': '12px',
+                    'color': '#7f8c8d', 'margin': '4px 20px 8px 20px'
+                }),
+
+                # Tabla
                 dash_table.DataTable(
                     id='exp-table',
                     columns=[
                         {'name': 'ID',           'id': 'id_experimento'},
+                        {'name': 'Fuente',       'id': 'fuente'},
                         {'name': 'T (°C)',        'id': 'T'},
                         {'name': 'H2a',           'id': 'H2a'},
                         {'name': 'CO2a',          'id': 'CO2a'},
@@ -185,18 +239,23 @@ app.layout = html.Div([
                         {'name': 'r1 (Ohm·cm2)', 'id': 'r_1'},
                     ],
                     data=exp_summary[[
-                        'id_experimento', 'T', 'H2a', 'CO2a',
+                        'id_experimento', 'fuente', 'T', 'H2a', 'CO2a',
                         'O2c', 'CO2c', 'E_max', 'i_max', 'r_1'
                     ]].round(4).to_dict('records'),
                     filter_action='native', sort_action='native',
                     page_size=20,
-                    style_table={'overflowX': 'auto', 'margin': '20px'},
+                    page_action='native',
+                    style_table={'overflowX': 'auto', 'margin': '0 20px 20px 20px'},
                     style_header={'backgroundColor': '#2c3e50', 'color': 'white',
                                   'fontWeight': 'bold', 'fontFamily': 'Arial'},
                     style_cell={'fontFamily': 'Arial', 'fontSize': '13px', 'padding': '8px'},
-                    style_data_conditional=[{
-                        'if': {'row_index': 'odd'}, 'backgroundColor': '#f8f9fa'
-                    }]
+                    style_data_conditional=[
+                        {'if': {'row_index': 'odd'}, 'backgroundColor': '#f8f9fa'},
+                        {'if': {'filter_query': '{fuente} = "udec_lab"'},
+                         'backgroundColor': '#eafaf1', 'color': '#1e8449'},
+                        {'if': {'filter_query': '{fuente} = "udec_real"'},
+                         'backgroundColor': '#eaf4fb', 'color': '#1a5276'},
+                    ]
                 )
             ])
         ]),
@@ -206,13 +265,11 @@ app.layout = html.Div([
             html.Div([
 
                 # Intervalo de auto-refresh para la simulacion
-                dcc.Interval(id='dt-sim-interval', interval=3_000,
+                dcc.Interval(id='dt-sim-interval', interval=5_000,
                              n_intervals=0, disabled=True),
 
                 # Store para guardar el id del experimento simulado activo
                 dcc.Store(id='dt-sim-exp-id', data=None),
-                # Store para guardar timestamp de última medición
-                dcc.Store(id='dt-last-ts', data=None),
 
                 html.Div([
 
@@ -258,19 +315,6 @@ app.layout = html.Div([
                         dcc.Slider(id='dt-corriente', min=0.005, max=0.200, step=0.005, value=0.100,
                                    marks={v: str(round(v, 3)) for v in [0.005, 0.05, 0.10, 0.15, 0.200]}),
 
-                        html.Label('Modo de simulacion', style={**SL, 'marginTop': '12px'}),
-                        dcc.RadioItems(
-                            id='dt-modo',
-                            options=[
-                                {'label': '  Continuo (corriente fija)', 'value': 'continuo'},
-                                {'label': '  Curva (21 puntos i)', 'value': 'curva'},
-                            ],
-                            value='continuo',
-                            style={'fontFamily': 'Arial', 'fontSize': '12px',
-                                   'color': '#2c3e50', 'marginBottom': '8px'},
-                            labelStyle={'display': 'block', 'marginBottom': '4px'}
-                        ),
-
                         # Botones simulacion
                         html.Div([
                             html.Button(
@@ -309,12 +353,6 @@ app.layout = html.Div([
                             'marginTop': '10px', 'textAlign': 'center',
                             'padding': '8px', 'borderRadius': '6px',
                             'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'
-                        }),
-                        # Indicador tiempo desde última medición
-                        html.Div(id='sim-ultima-medicion', style={
-                            'fontFamily': 'Arial', 'fontSize': '11px',
-                            'marginTop': '4px', 'textAlign': 'center',
-                            'color': '#95a5a6'
                         }),
 
                         # Boton cargar experimento cercano
@@ -453,6 +491,50 @@ app.layout = html.Div([
 ], style={'maxWidth': '1200px', 'margin': 'auto', 'padding': '20px'})
 
 
+# ── Callback Tab 3: Filtros de experimentos ───────────────────────────────────
+@app.callback(
+    Output('exp-table',    'data'),
+    Output('exp-table',    'page_size'),
+    Output('exp-contador', 'children'),
+    Input('exp-fuente-filter', 'value'),
+    Input('exp-temp-filter',   'value'),
+    Input('exp-pagesize',      'value'),
+)
+def filtrar_experimentos(fuente, temp, page_size):
+    sub = exp_summary.copy()
+
+    # Filtro por fuente
+    if fuente == 'warsaw_ut':
+        sub = sub[sub['fuente'] == 'warsaw_ut']
+    elif fuente == 'udec_lab':
+        sub = sub[sub['fuente'] == 'udec_lab']
+    elif fuente == 'udec_real':
+        sub = sub[sub['fuente'] == 'udec_real']
+
+    # Filtro por temperatura
+    if temp != 'todas':
+        sub = sub[sub['T'] == temp]
+
+    total = len(sub)
+    data = sub[['id_experimento', 'fuente', 'T', 'H2a', 'CO2a',
+                'O2c', 'CO2c', 'E_max', 'i_max', 'r_1']].round(4).to_dict('records')
+
+    # Fuente legible
+    fuente_label = {
+        'todas':      'todas las fuentes',
+        'warsaw_ut':  'Warsaw (Polonia)',
+        'udec_lab':   'Simulador UdeC',
+        'udec_real':  'Laboratorio UdeC',
+    }.get(fuente, fuente)
+
+    contador = f"Mostrando {total} experimento{'s' if total != 1 else ''} — {fuente_label}"
+    if temp != 'todas':
+        contador += f" — T={temp}°C"
+
+    ps = min(page_size, total) if page_size < 9999 else total
+    return data, ps, contador
+
+
 # ── Callbacks Tab 1 ────────────────────────────────────────────────────────────
 @app.callback(
     Output('polar-graph', 'figure'),
@@ -538,11 +620,10 @@ def update_var(var):
     State('dt-N2c',  'value'),
     State('dt-r1',   'value'),
     State('dt-corriente', 'value'),
-    State('dt-modo',      'value'),
     State('dt-sim-exp-id', 'data'),
     prevent_initial_call=True
 )
-def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, modo, exp_id_actual):
+def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, exp_id_actual):
     global _sim_process
 
     from dash import ctx
@@ -568,10 +649,9 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
         sim_path = os.path.normpath(
             os.path.join(_dashboard_dir, '..', 'simulador', 'simulador_mcfc.py')
         )
-        modo_sim = modo if modo else 'continuo'
         cmd = [
             'python3', sim_path,
-            '--modo',        modo_sim,
+            '--modo',        'continuo',
             '--temperatura', str(int(T)),
             '--h2a',   str(H2a),
             '--h2oa',  str(H2Oa),
@@ -580,14 +660,9 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
             '--co2c',  str(CO2c),
             '--n2c',   str(N2c),
             '--r1',    str(r1),
+            '--corriente', str(corriente),
             '--intervalo', '3'
         ]
-        # corriente solo aplica en modo continuo
-        if modo_sim == 'continuo':
-            cmd += ['--corriente', str(corriente)]
-        # en modo curva se hace 1 solo ciclo
-        if modo_sim == 'curva':
-            cmd += ['--ciclos', '1']
         try:
             import time as _time
             t_inicio = datetime.now(timezone.utc)
@@ -618,13 +693,8 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
                 except Exception:
                     pass
             style = {**status_base, 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
-            if new_exp_id:
-                if modo_sim == 'continuo':
-                    label = f'● Simulando ({modo_sim}) — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
-                else:
-                    label = f'● Simulando ({modo_sim}) — T={T}°C | Exp {new_exp_id}'
-            else:
-                label = f'● Simulando ({modo_sim}) — T={T}°C | exp pendiente'
+            label = (f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
+                     if new_exp_id else f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | exp pendiente')
             return False, new_exp_id, label, style
         except Exception as ex:
             style = {**status_base, 'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
@@ -641,47 +711,6 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
 
     style = {**status_base, 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
     return True, None, 'Sin simulacion activa', style
-
-
-# Actualizar indicador de última medición
-@app.callback(
-    Output('sim-ultima-medicion', 'children'),
-    Input('dt-sim-interval', 'n_intervals'),
-    State('dt-sim-exp-id', 'data'),
-    prevent_initial_call=True
-)
-def actualizar_ultima_medicion(n, exp_id):
-    if not exp_id:
-        return ''
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        row = pd.read_sql(
-            "SELECT timestamp_medicion FROM mediciones "
-            "WHERE id_experimento = %s "
-            "ORDER BY timestamp_medicion DESC LIMIT 1",
-            conn, params=(exp_id,)
-        )
-        conn.close()
-        if row.empty:
-            return 'Sin mediciones aún'
-        ts = pd.to_datetime(row['timestamp_medicion'].iloc[0], utc=True)
-        ahora = datetime.now(timezone.utc)
-        seg = int((ahora - ts).total_seconds())
-        if seg < 10:
-            color = '#27ae60'   # verde — reciente
-            icono = '🟢'
-        elif seg < 30:
-            color = '#f39c12'   # naranja — tardando
-            icono = '🟡'
-        else:
-            color = '#e74c3c'   # rojo — sin datos
-            icono = '🔴'
-        return html.Span(
-            f'{icono} Última medición: hace {seg}s',
-            style={'color': color, 'fontWeight': 'bold'}
-        )
-    except Exception:
-        return ''
 
 
 # Actualizar curva DT + visor de variables en tiempo real
