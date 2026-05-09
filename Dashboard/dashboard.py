@@ -59,6 +59,42 @@ from config import DB_CONFIG
 # ── Proceso simulador global ───────────────────────────────────────────────────
 _sim_process = None
 
+# ── Cargar modelo PLS ─────────────────────────────────────────────────────────
+import joblib as _joblib
+
+_PLS_PATH = _os.path.normpath(
+    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'modelos', 'pls_voltaje.pkl')
+)
+try:
+    _pls_modelo = _joblib.load(_PLS_PATH)
+    _pls        = _pls_modelo['pls']
+    _scaler_X   = _pls_modelo['scaler_X']
+    _scaler_y   = _pls_modelo['scaler_y']
+    _PLS_OK     = True
+    print(f"✓ Modelo PLS cargado — R²={_pls_modelo['r2']:.4f}")
+except Exception as _e:
+    _PLS_OK = False
+    print(f"⚠ Modelo PLS no disponible: {_e}")
+
+def voltaje_pls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
+    """Predice voltaje usando el modelo PLS para un array de densidades de corriente."""
+    if not _PLS_OK:
+        return None
+    i_arr = np.atleast_1d(i_arr)
+    X = np.column_stack([
+        np.full_like(i_arr, T),
+        np.full_like(i_arr, H2a),
+        np.full_like(i_arr, H2Oa),
+        np.full_like(i_arr, CO2a),
+        np.full_like(i_arr, O2c),
+        np.full_like(i_arr, CO2c),
+        np.full_like(i_arr, N2c),
+        i_arr
+    ])
+    X_sc  = _scaler_X.transform(X)
+    y_sc  = _pls.predict(X_sc).ravel()
+    return _scaler_y.inverse_transform(y_sc.reshape(-1,1)).ravel()
+
 def get_data():
     conn = psycopg2.connect(**DB_CONFIG)
     df = pd.read_sql('''
@@ -300,7 +336,7 @@ app.layout = html.Div([
                                    marks={v: str(v) for v in [0.1, 1.5, 3.0, 5.3]}),
 
                         html.Label('CO2 catodo (CO2c)', style=SL),
-                        dcc.Slider(id='dt-CO2c', min=0.3, max=14.0, step=0.2, value=2.67,
+                        dcc.Slider(id='dt-CO2c', min=0.3, max=14.0, step=0.2, value=2.15,
                                    marks={v: str(v) for v in [0.3, 3.0, 7.0, 14.0]}),
 
                         html.Label('N2 catodo (N2c)', style=SL),
@@ -314,6 +350,33 @@ app.layout = html.Div([
                         html.Label('Densidad de corriente de operacion i (A/cm²)', style=SL),
                         dcc.Slider(id='dt-corriente', min=0.005, max=0.200, step=0.005, value=0.100,
                                    marks={v: str(round(v, 3)) for v in [0.005, 0.05, 0.10, 0.15, 0.200]}),
+
+                        html.Label('Modelo de prediccion', style={**SL, 'marginTop': '12px'}),
+                        dcc.RadioItems(
+                            id='dt-modelo',
+                            options=[
+                                {'label': '  Nernst (físico)', 'value': 'nernst'},
+                                {'label': '  PLS (datos)',     'value': 'pls'},
+                                {'label': '  Ambos',           'value': 'ambos'},
+                            ],
+                            value='ambos',
+                            style={'fontFamily': 'Arial', 'fontSize': '12px',
+                                   'color': '#2c3e50', 'marginBottom': '8px'},
+                            labelStyle={'display': 'block', 'marginBottom': '4px'}
+                        ),
+
+                        html.Label('Modo de simulacion', style={**SL, 'marginTop': '4px'}),
+                        dcc.RadioItems(
+                            id='dt-modo',
+                            options=[
+                                {'label': '  Continuo (corriente fija)', 'value': 'continuo'},
+                                {'label': '  Curva (21 puntos i)',        'value': 'curva'},
+                            ],
+                            value='continuo',
+                            style={'fontFamily': 'Arial', 'fontSize': '12px',
+                                   'color': '#2c3e50', 'marginBottom': '8px'},
+                            labelStyle={'display': 'block', 'marginBottom': '4px'}
+                        ),
 
                         # Botones simulacion
                         html.Div([
@@ -620,10 +683,11 @@ def update_var(var):
     State('dt-N2c',  'value'),
     State('dt-r1',   'value'),
     State('dt-corriente', 'value'),
+    State('dt-modo',       'value'),
     State('dt-sim-exp-id', 'data'),
     prevent_initial_call=True
 )
-def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, exp_id_actual):
+def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, modo, exp_id_actual):
     global _sim_process
 
     from dash import ctx
@@ -649,9 +713,10 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
         sim_path = os.path.normpath(
             os.path.join(_dashboard_dir, '..', 'simulador', 'simulador_mcfc.py')
         )
+        modo_sim = modo if modo else 'continuo'
         cmd = [
             'python3', sim_path,
-            '--modo',        'continuo',
+            '--modo',        modo_sim,
             '--temperatura', str(int(T)),
             '--h2a',   str(H2a),
             '--h2oa',  str(H2Oa),
@@ -660,9 +725,12 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
             '--co2c',  str(CO2c),
             '--n2c',   str(N2c),
             '--r1',    str(r1),
-            '--corriente', str(corriente),
             '--intervalo', '3'
         ]
+        if modo_sim == 'continuo':
+            cmd += ['--corriente', str(corriente)]
+        if modo_sim == 'curva':
+            cmd += ['--ciclos', '1']
         try:
             import time as _time
             t_inicio = datetime.now(timezone.utc)
@@ -693,8 +761,13 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
                 except Exception:
                     pass
             style = {**status_base, 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
-            label = (f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
-                     if new_exp_id else f'● Simulando — T={T}°C | i={corriente:.3f} A/cm² | exp pendiente')
+            if new_exp_id:
+                if modo_sim == 'continuo':
+                    label = f'● Simulando (continuo) — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
+                else:
+                    label = f'● Simulando (curva) — T={T}°C | Exp {new_exp_id}'
+            else:
+                label = f'● Simulando ({modo_sim}) — T={T}°C | exp pendiente'
             return False, new_exp_id, label, style
         except Exception as ex:
             style = {**status_base, 'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
@@ -731,8 +804,9 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
     Input('dt-N2c',  'value'),
     Input('dt-r1',   'value'),
     Input('dt-sim-exp-id', 'data'),   # Input (no State) → dispara al cambiar exp_id
+    Input('dt-modelo',     'value'),
 )
-def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim):
+def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_sel):
 
     fig_empty = go.Figure()
     fig_empty.update_layout(
@@ -760,20 +834,40 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim):
 
     # ── Curva DT estática (responde a sliders siempre) ─────────────────────────
     i_range = np.linspace(0.005, 0.25, 100)
-    V_dt = voltaje_modelo(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, r1)
-    P_dt = V_dt * i_range
+    modelo_sel = modelo_sel or 'ambos'
 
     fig_dt = go.Figure()
-    fig_dt.add_trace(go.Scatter(
-        x=i_range, y=V_dt, mode='lines',
-        line=dict(color='#e74c3c', width=2.5, dash='dot'),
-        name='Modelo DT', yaxis='y1'
-    ))
-    fig_dt.add_trace(go.Scatter(
-        x=i_range, y=P_dt, mode='lines',
-        line=dict(color='#8e44ad', width=2, dash='dash'),
-        name='P modelo DT', yaxis='y2'
-    ))
+
+    # Curva Nernst
+    if modelo_sel in ('nernst', 'ambos'):
+        V_nernst = voltaje_modelo(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, r1)
+        P_nernst = V_nernst * i_range
+        fig_dt.add_trace(go.Scatter(
+            x=i_range, y=V_nernst, mode='lines',
+            line=dict(color='#e74c3c', width=2.5, dash='dot'),
+            name='Nernst (físico)', yaxis='y1'
+        ))
+        fig_dt.add_trace(go.Scatter(
+            x=i_range, y=P_nernst, mode='lines',
+            line=dict(color='#8e44ad', width=2, dash='dash'),
+            name='P Nernst', yaxis='y2'
+        ))
+
+    # Curva PLS
+    if modelo_sel in ('pls', 'ambos') and _PLS_OK:
+        V_pls = voltaje_pls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+        if V_pls is not None:
+            P_pls = V_pls * i_range
+            fig_dt.add_trace(go.Scatter(
+                x=i_range, y=V_pls, mode='lines',
+                line=dict(color='#2980b9', width=2.5),
+                name='PLS (datos)', yaxis='y1'
+            ))
+            fig_dt.add_trace(go.Scatter(
+                x=i_range, y=P_pls, mode='lines',
+                line=dict(color='#16a085', width=2, dash='dash'),
+                name='P PLS', yaxis='y2'
+            ))
 
     metricas_out = html.P("Ajusta los sliders para ver la curva del modelo DT.",
                           style={'color': '#888', 'fontFamily': 'Arial'})
@@ -802,46 +896,69 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim):
                     marker=dict(color='#27ae60', size=8), yaxis='y1'
                 ))
 
-                # Metricas si hay suficientes puntos
-                if len(df_m) >= 3:
-                    V_pred = voltaje_modelo(
+                # Metricas si hay suficientes puntos y hay variedad de corrientes
+                es_modo_continuo = df_m['i_densidad'].nunique() <= 2
+                if es_modo_continuo:
+                    metricas_out = html.Div([
+                        html.P(
+                            "⚠ Métricas no disponibles en modo continuo.",
+                            style={'color': '#e67e22', 'fontFamily': 'Arial',
+                                   'fontWeight': 'bold', 'marginBottom': '4px'}
+                        ),
+                        html.P(
+                            "Use modo Curva (21 puntos i) para evaluar el modelo con R², MAE y NRMSE.",
+                            style={'color': '#7f8c8d', 'fontFamily': 'Arial', 'fontSize': '12px'}
+                        ),
+                    ], style={'padding': '12px', 'backgroundColor': '#fef9e7',
+                              'borderRadius': '8px', 'border': '1px solid #f39c12'})
+
+                if len(df_m) >= 3 and not es_modo_continuo:
+                    V_pred_n = voltaje_modelo(
                         df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, r1
                     )
-                    r2, mae, nrmse = metricas(df_m['voltaje'].values, V_pred)
+                    r2_n, mae_n, nrmse_n = metricas(df_m['voltaje'].values, V_pred_n)
+
+                    # Métricas PLS
+                    r2_p = mae_p = nrmse_p = None
+                    if _PLS_OK:
+                        V_pred_p = voltaje_pls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+                        if V_pred_p is not None:
+                            r2_p, mae_p, nrmse_p = metricas(df_m['voltaje'].values, V_pred_p)
 
                     def color_m(val, bueno, malo, inv=False):
+                        if val is None: return '#aaa'
                         if not inv:
                             return '#27ae60' if val >= bueno else ('#e67e22' if val >= malo else '#e74c3c')
                         return '#27ae60' if val <= bueno else ('#e67e22' if val <= malo else '#e74c3c')
 
-                    card = {'display': 'inline-block', 'textAlign': 'center', 'width': '30%',
-                            'padding': '12px', 'backgroundColor': 'white', 'borderRadius': '8px',
-                            'boxShadow': '0 1px 4px #ccc', 'marginRight': '10px'}
+                    card = {'display': 'inline-block', 'textAlign': 'center', 'width': '14%',
+                            'padding': '10px', 'backgroundColor': 'white', 'borderRadius': '8px',
+                            'boxShadow': '0 1px 4px #ccc', 'marginRight': '8px'}
+
+                    def met_card(titulo, val_n, val_p, bueno, malo, inv=False):
+                        return html.Div([
+                            html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '11px',
+                                                    'marginBottom': '6px', 'color': '#555'}),
+                            html.Div("Nernst", style={'fontSize': '10px', 'color': '#e74c3c'}),
+                            html.Div(f"{val_n:.4f}" if val_n is not None else "—",
+                                     style={'fontSize': '18px', 'fontWeight': 'bold',
+                                            'color': color_m(val_n, bueno, malo, inv)}),
+                            html.Div("PLS", style={'fontSize': '10px', 'color': '#2980b9',
+                                                   'marginTop': '6px'}),
+                            html.Div(f"{val_p:.4f}" if val_p is not None else "—",
+                                     style={'fontSize': '18px', 'fontWeight': 'bold',
+                                            'color': color_m(val_p, bueno, malo, inv)}),
+                        ], style=card)
 
                     metricas_out = html.Div([
                         html.H4(f"Evaluacion del modelo — Exp {exp_id_sim}",
                                 style={'color': '#2c3e50', 'marginBottom': '8px',
                                        'fontFamily': 'Arial'}),
                         html.Div([
-                            html.Div([
-                                html.Div("R²", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
-                                html.Div(f"{r2:.4f}",
-                                         style={'fontSize': '24px',
-                                                'color': color_m(r2, 0.95, 0.85)})
-                            ], style=card),
-                            html.Div([
-                                html.Div("MAE [V]", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
-                                html.Div(f"{mae:.4f}",
-                                         style={'fontSize': '24px',
-                                                'color': color_m(mae, 0.02, 0.05, inv=True)})
-                            ], style=card),
-                            html.Div([
-                                html.Div("NRMSE", style={'fontWeight': 'bold', 'marginBottom': '4px'}),
-                                html.Div(f"{nrmse:.4f}",
-                                         style={'fontSize': '24px',
-                                                'color': color_m(nrmse, 0.05, 0.10, inv=True)})
-                            ], style={**card, 'marginRight': '0'})
-                        ])
+                            met_card("R²",    r2_n,    r2_p,    0.95, 0.85),
+                            met_card("MAE[V]",mae_n,   mae_p,   0.02, 0.05, inv=True),
+                            met_card("NRMSE", nrmse_n, nrmse_p, 0.05, 0.10, inv=True),
+                        ], style={'display': 'flex', 'flexWrap': 'nowrap'})
                     ])
 
                 # KPIs ultima medicion

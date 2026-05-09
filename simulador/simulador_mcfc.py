@@ -29,34 +29,63 @@ import random
 import math
 import signal
 import sys
+import os
 from datetime import datetime, timezone
 
 import psycopg2
 
-import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..'))
+# ── Credenciales desde config.py ──────────────────────────────────────────────
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from config import DB_CONFIG
 
+# ── Rangos operacionales (basados en dataset experimental) ────────────────────
 RANGOS_OPERACION = {
     "t":          [550, 575, 600, 625, 650],
-    "h2a":        (0.22, 2.20),
-    "h2oa":       (0.05, 1.30),
+    "h2a":        (0.22, 4.41),
+    "h2oa":       (0.05, 1.29),
     "n2a":        (0.0,  0.5),
     "co":         (0.0,  0.1),
     "ch4":        (0.0,  0.1),
-    "co2a":       (0.05, 1.10),
-    "o2c":        (0.10, 5.30),
-    "n2c":        (0.50, 29.0),
-    "co2c":       (0.30, 2.67),
+    "co2a":       (0.06, 1.10),
+    "o2c":        (0.13, 5.25),
+    "n2c":        (0.49, 29.11),
+    "co2c":       (0.27, 14.24),
     "h2oc":       (0.0,  0.5),
     "delta_nia":  (0.0,  0.1),
     "rho_a":      (0.0,  0.1),
     "delta_like": (0.0,  0.1),
     "delta_nioc": (0.0,  0.1),
     "rho_c":      (0.0,  0.1),
-    "r1":         (1.80, 2.90),
 }
 
+# ── r1 calibrado por temperatura (dataset experimental PGNN) ──────────────────
+R1_POR_TEMP = {
+    550: 2.9355,
+    575: 2.6348,
+    600: 2.3796,
+    625: 2.1614,
+    650: 1.9734,
+}
+
+# ── Bias residual por temperatura (V) ─────────────────────────────────────────
+BIAS_POR_TEMP = {
+    550: -0.038,
+    575: -0.002,
+    600: -0.004,
+    625: +0.001,
+    650: -0.023,
+}
+
+# ── Ruido calibrado por temperatura (std del residual) ────────────────────────
+RUIDO_POR_TEMP = {
+    550: 0.007,
+    575: 0.019,
+    600: 0.021,
+    625: 0.024,
+    650: 0.024,
+}
+
+# ── Puntos de densidad de corriente para modo curva ───────────────────────────
 I_DENSIDADES = [
     0.005, 0.010, 0.020, 0.030, 0.040, 0.050,
     0.060, 0.070, 0.080, 0.090, 0.100, 0.110,
@@ -69,52 +98,22 @@ F_FAR = 96485
 R2    = 91.878
 DELTA = 0.012
 
-# ── r1 calibrado por temperatura (ajustado a datos experimentales PGNN) ────────
-# Fuente: regresión sobre Data_original_PGNN.xlsx — un valor único por T
-R1_POR_TEMP = {
-    550: 2.9355,
-    575: 2.6348,
-    600: 2.3796,
-    625: 2.1614,
-    650: 1.9734,
-}
-
-# ── Bias residual por temperatura (V) — diferencia media modelo vs datos reales
-# Fuente: Data_original_PGNN.xlsx, calculado con condiciones propias de cada punto
-# 650°C usa condición estándar de catodo (O2c~1.3, CO2c~2.67) — misma que el dashboard
-BIAS_POR_TEMP = {
-    550: -0.038,   # -38 mV  (std=7 mV,  n=13)
-    575: -0.002,   #  -2 mV  (std=19 mV, n=14)
-    600: -0.004,   #  -4 mV  (std=21 mV, n=15)
-    625: +0.001,   #  +1 mV  (std=24 mV, n=15)
-    650: -0.023,   # -23 mV  (std=24 mV, n=407, catodo estándar)
-}
-
-# ── Ruido real (std del residual) por temperatura ──────────────────────────────
-RUIDO_POR_TEMP = {
-    550: 0.007,    #  7 mV
-    575: 0.019,    # 19 mV
-    600: 0.021,    # 21 mV
-    625: 0.024,    # 24 mV
-    650: 0.024,    # 24 mV
-}
-
-# ── Modelo electroquímico ──────────────────────────────────────────────────────
+# ── Modelo electroquímico (alineado con dashboard.py) ─────────────────────────
 
 def e0_temperatura(T_K):
-    # Coeficientes alineados con dashboard.py y dataset PGNN
+    # Fórmula alineada con dashboard.py y dataset PGNN
     return 1.2723 - 2.4516e-4 * T_K
 
 def nernst(T_K, h2a, h2oa, co2a, o2c, co2c):
-    eps = 1e-10
-    sa  = max(h2a + h2oa + co2a, eps)
-    sc  = max(o2c + co2c,        eps)
+    eps   = 1e-10
+    sa    = max(h2a + h2oa + co2a, eps)
+    sc    = max(o2c + co2c, eps)
     xH2   = max(h2a  / sa, eps)
     xH2O  = max(h2oa / sa, eps)
     xCO2a = max(co2a / sa, eps)
     xO2   = max(o2c  / sc, eps)
     xCO2c = max(co2c / sc, eps)
-    arg = (xH2 * math.sqrt(xO2) * xCO2c) / (xH2O * xCO2a)
+    arg   = (xH2 * math.sqrt(xO2) * xCO2c) / (xH2O * xCO2a)
     return e0_temperatura(T_K) + (R_GAS * T_K / (2 * F_FAR)) * math.log(arg)
 
 def voltaje_modelo(i, T_C, r1, h2a, h2oa, co2a, o2c, co2c):
@@ -136,8 +135,7 @@ def eta_eficiencia(V, i):
 
 def generar_condiciones(args):
     def rnd(rango): return round(random.uniform(*rango), 4)
-    T = args.temperatura if args.temperatura else random.choice(RANGOS_OPERACION["t"])
-    # r1 calibrado por temperatura; si el usuario lo fija explícitamente, respetar
+    T  = args.temperatura if args.temperatura else random.choice(RANGOS_OPERACION["t"])
     r1 = args.r1 if args.r1 is not None else R1_POR_TEMP.get(T, 1.9734)
     return {
         "t":          T,
@@ -212,25 +210,16 @@ def insertar_parametros_modelo(conn, id_exp, r1, e_max=None, i_max=None):
 # ── Modo continuo ──────────────────────────────────────────────────────────────
 
 def run_continuo(conn, args, cond, id_exp):
-    """
-    Opera a una densidad de corriente fija generando mediciones
-    continuas con ruido y bias calibrados respecto a datos reales (PGNN dataset).
-    """
     i_fija = args.corriente
     T      = cond["t"]
+    bias   = BIAS_POR_TEMP.get(T, -0.010)
+    sigma  = RUIDO_POR_TEMP.get(T, 0.020)
 
-    # Voltaje base del modelo calibrado
     V_base = voltaje_modelo(
         i_fija, T, cond["r1"],
         cond["h2a"], cond["h2oa"], cond["co2a"],
         cond["o2c"], cond["co2c"]
     )
-
-    # Bias y ruido calibrados por temperatura
-    bias  = BIAS_POR_TEMP.get(T, -0.010)
-    sigma = RUIDO_POR_TEMP.get(T, 0.020)
-
-    # Voltaje base ajustado con bias
     V_cal = V_base + bias
 
     print(f"  Modo CONTINUO — i={i_fija:.3f} A/cm² | T={T}°C")
@@ -238,14 +227,11 @@ def run_continuo(conn, args, cond, id_exp):
     print(f"  V_calibrado={V_cal:.4f} V")
     print(f"  Generando mediciones cada {args.intervalo} segundos...\n")
 
-    # Drift lento para simular variación térmica real (acotado ±30 mV)
     drift = 0.0
     medicion_num = 0
 
     while True:
         medicion_num += 1
-
-        # Ruido gaussiano con std real del dataset + drift lento
         ruido  = random.gauss(0, sigma)
         drift += random.gauss(0, sigma * 0.15)
         drift  = max(min(drift, 0.030), -0.030)
@@ -267,12 +253,12 @@ def run_continuo(conn, args, cond, id_exp):
 # ── Modo curva ─────────────────────────────────────────────────────────────────
 
 def run_curva(conn, args, cond, id_exp):
-    """Recorre los 21 puntos de densidad de corriente con ruido calibrado."""
     T     = cond["t"]
     bias  = BIAS_POR_TEMP.get(T, -0.010)
     sigma = RUIDO_POR_TEMP.get(T, 0.020)
 
-    print(f"  Modo CURVA — {len(I_DENSIDADES)} puntos | T={T}°C | bias={bias*1000:+.0f} mV | σ={sigma*1000:.0f} mV\n")
+    print(f"  Modo CURVA — {len(I_DENSIDADES)} puntos | T={T}°C | "
+          f"bias={bias*1000:+.0f} mV | σ={sigma*1000:.0f} mV\n")
 
     for idx, i in enumerate(I_DENSIDADES):
         V_mod = voltaje_modelo(
@@ -363,12 +349,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulador MCFC Digital Twin")
 
     parser.add_argument("--modo",        default="continuo",
-                        choices=["continuo", "curva"],
-                        help="Modo de operacion (default: continuo)")
-    parser.add_argument("--intervalo",   type=int,   default=3,
-                        help="Segundos entre mediciones (default: 3)")
-    parser.add_argument("--corriente",   type=float, default=0.10,
-                        help="Densidad de corriente fija A/cm² para modo continuo (default: 0.10)")
+                        choices=["continuo", "curva"])
+    parser.add_argument("--intervalo",   type=int,   default=3)
+    parser.add_argument("--corriente",   type=float, default=0.10)
     parser.add_argument("--temperatura", type=int,   default=None,
                         choices=[550, 575, 600, 625, 650])
     parser.add_argument("--h2a",  type=float, default=None)
@@ -378,8 +361,7 @@ if __name__ == "__main__":
     parser.add_argument("--co2c", type=float, default=None)
     parser.add_argument("--n2c",  type=float, default=None)
     parser.add_argument("--r1",   type=float, default=None)
-    parser.add_argument("--ciclos", type=int, default=None,
-                        help="Numero de experimentos (default: infinito)")
+    parser.add_argument("--ciclos", type=int, default=None)
 
     args = parser.parse_args()
     run(args)
