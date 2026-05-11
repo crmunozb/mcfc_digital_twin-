@@ -59,29 +59,40 @@ from config import DB_CONFIG
 # ── Proceso simulador global ───────────────────────────────────────────────────
 _sim_process = None
 
-# ── Cargar modelo PLS ─────────────────────────────────────────────────────────
+# ── Cargar modelos PLS y KPLS ────────────────────────────────────────────────
 import joblib as _joblib
 
-_PLS_PATH = _os.path.normpath(
-    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'modelos', 'pls_voltaje.pkl')
+_MODELOS_DIR = _os.path.normpath(
+    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'modelos')
 )
+
+# PLS
 try:
-    _pls_modelo = _joblib.load(_PLS_PATH)
-    _pls        = _pls_modelo['pls']
-    _scaler_X   = _pls_modelo['scaler_X']
-    _scaler_y   = _pls_modelo['scaler_y']
-    _PLS_OK     = True
-    print(f"✓ Modelo PLS cargado — R²={_pls_modelo['r2']:.4f}")
+    _pls_data  = _joblib.load(_os.path.join(_MODELOS_DIR, 'pls_voltaje_cv.pkl'))
+    _pls_pipe  = _pls_data['modelo']
+    _PLS_FEATS = _pls_data['features']
+    _PLS_OK    = True
+    print(f"✓ Modelo PLS cargado — R²_test={_pls_data['r2_test']:.4f}")
 except Exception as _e:
     _PLS_OK = False
     print(f"⚠ Modelo PLS no disponible: {_e}")
 
-def voltaje_pls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
-    """Predice voltaje usando el modelo PLS para un array de densidades de corriente."""
-    if not _PLS_OK:
-        return None
+# KPLS
+try:
+    _kpls_data  = _joblib.load(_os.path.join(_MODELOS_DIR, 'kpls_voltaje_cv.pkl'))
+    _kpls_pipe  = _kpls_data['modelo']
+    _KPLS_FEATS = _kpls_data['features']
+    _KPLS_OK    = True
+    print(f"✓ Modelo KPLS cargado — R²_test={_kpls_data['r2_test']:.4f}")
+except Exception as _e:
+    _KPLS_OK = False
+    print(f"⚠ Modelo KPLS no disponible: {_e}")
+
+
+def _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
+    """Construye matriz de features para los modelos PLS/KPLS."""
     i_arr = np.atleast_1d(i_arr)
-    X = np.column_stack([
+    return np.column_stack([
         np.full_like(i_arr, T),
         np.full_like(i_arr, H2a),
         np.full_like(i_arr, H2Oa),
@@ -91,9 +102,22 @@ def voltaje_pls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
         np.full_like(i_arr, N2c),
         i_arr
     ])
-    X_sc  = _scaler_X.transform(X)
-    y_sc  = _pls.predict(X_sc).ravel()
-    return _scaler_y.inverse_transform(y_sc.reshape(-1,1)).ravel()
+
+
+def voltaje_pls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
+    """Predice voltaje usando el modelo PLS."""
+    if not _PLS_OK:
+        return None
+    X = _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+    return _pls_pipe.predict(X).ravel()
+
+
+def voltaje_kpls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
+    """Predice voltaje usando el modelo KPLS."""
+    if not _KPLS_OK:
+        return None
+    X = _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+    return _kpls_pipe.predict(X).ravel()
 
 def get_data():
     conn = psycopg2.connect(**DB_CONFIG)
@@ -357,7 +381,8 @@ app.layout = html.Div([
                             options=[
                                 {'label': '  Nernst (físico)', 'value': 'nernst'},
                                 {'label': '  PLS (datos)',     'value': 'pls'},
-                                {'label': '  Ambos',           'value': 'ambos'},
+                                {'label': '  KPLS (kernel)',   'value': 'kpls'},
+                                {'label': '  Todos',           'value': 'ambos'},
                             ],
                             value='ambos',
                             style={'fontFamily': 'Arial', 'fontSize': '12px',
@@ -869,6 +894,22 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                 name='P PLS', yaxis='y2'
             ))
 
+    # Curva KPLS
+    if modelo_sel in ('kpls', 'ambos') and _KPLS_OK:
+        V_kpls = voltaje_kpls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+        if V_kpls is not None:
+            P_kpls = V_kpls * i_range
+            fig_dt.add_trace(go.Scatter(
+                x=i_range, y=V_kpls, mode='lines',
+                line=dict(color='#e67e22', width=2.5),
+                name='KPLS (kernel)', yaxis='y1'
+            ))
+            fig_dt.add_trace(go.Scatter(
+                x=i_range, y=P_kpls, mode='lines',
+                line=dict(color='#d35400', width=2, dash='dash'),
+                name='P KPLS', yaxis='y2'
+            ))
+
     metricas_out = html.P("Ajusta los sliders para ver la curva del modelo DT.",
                           style={'color': '#888', 'fontFamily': 'Arial'})
     kpis_out = []
@@ -925,6 +966,13 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                         if V_pred_p is not None:
                             r2_p, mae_p, nrmse_p = metricas(df_m['voltaje'].values, V_pred_p)
 
+                    # Métricas KPLS
+                    r2_k = mae_k = nrmse_k = None
+                    if _KPLS_OK:
+                        V_pred_k = voltaje_kpls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+                        if V_pred_k is not None:
+                            r2_k, mae_k, nrmse_k = metricas(df_m['voltaje'].values, V_pred_k)
+
                     def color_m(val, bueno, malo, inv=False):
                         if val is None: return '#aaa'
                         if not inv:
@@ -935,19 +983,24 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                             'padding': '10px', 'backgroundColor': 'white', 'borderRadius': '8px',
                             'boxShadow': '0 1px 4px #ccc', 'marginRight': '8px'}
 
-                    def met_card(titulo, val_n, val_p, bueno, malo, inv=False):
+                    def met_card(titulo, val_n, val_p, val_k, bueno, malo, inv=False):
                         return html.Div([
                             html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '11px',
                                                     'marginBottom': '6px', 'color': '#555'}),
                             html.Div("Nernst", style={'fontSize': '10px', 'color': '#e74c3c'}),
                             html.Div(f"{val_n:.4f}" if val_n is not None else "—",
-                                     style={'fontSize': '18px', 'fontWeight': 'bold',
+                                     style={'fontSize': '16px', 'fontWeight': 'bold',
                                             'color': color_m(val_n, bueno, malo, inv)}),
                             html.Div("PLS", style={'fontSize': '10px', 'color': '#2980b9',
-                                                   'marginTop': '6px'}),
+                                                   'marginTop': '4px'}),
                             html.Div(f"{val_p:.4f}" if val_p is not None else "—",
-                                     style={'fontSize': '18px', 'fontWeight': 'bold',
+                                     style={'fontSize': '16px', 'fontWeight': 'bold',
                                             'color': color_m(val_p, bueno, malo, inv)}),
+                            html.Div("KPLS", style={'fontSize': '10px', 'color': '#e67e22',
+                                                    'marginTop': '4px'}),
+                            html.Div(f"{val_k:.4f}" if val_k is not None else "—",
+                                     style={'fontSize': '16px', 'fontWeight': 'bold',
+                                            'color': color_m(val_k, bueno, malo, inv)}),
                         ], style=card)
 
                     metricas_out = html.Div([
@@ -955,9 +1008,9 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                                 style={'color': '#2c3e50', 'marginBottom': '8px',
                                        'fontFamily': 'Arial'}),
                         html.Div([
-                            met_card("R²",    r2_n,    r2_p,    0.95, 0.85),
-                            met_card("MAE[V]",mae_n,   mae_p,   0.02, 0.05, inv=True),
-                            met_card("NRMSE", nrmse_n, nrmse_p, 0.05, 0.10, inv=True),
+                            met_card("R²",    r2_n,    r2_p,    r2_k,    0.95, 0.85),
+                            met_card("MAE[V]",mae_n,   mae_p,   mae_k,   0.02, 0.05, inv=True),
+                            met_card("NRMSE", nrmse_n, nrmse_p, nrmse_k, 0.05, 0.10, inv=True),
                         ], style={'display': 'flex', 'flexWrap': 'nowrap'})
                     ])
 
