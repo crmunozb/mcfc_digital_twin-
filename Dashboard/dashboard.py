@@ -89,8 +89,8 @@ except Exception as _e:
     print(f"⚠ Modelo KPLS no disponible: {_e}")
 
 
-def _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
-    """Construye matriz de features para los modelos PLS/KPLS."""
+def _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r_1):
+    """Construye matriz de features para los modelos PLS/KPLS (incluye r_1)."""
     i_arr = np.atleast_1d(i_arr)
     return np.column_stack([
         np.full_like(i_arr, T),
@@ -100,23 +100,24 @@ def _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
         np.full_like(i_arr, O2c),
         np.full_like(i_arr, CO2c),
         np.full_like(i_arr, N2c),
-        i_arr
+        i_arr,
+        np.full_like(i_arr, r_1)
     ])
 
 
-def voltaje_pls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
+def voltaje_pls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r_1):
     """Predice voltaje usando el modelo PLS."""
     if not _PLS_OK:
         return None
-    X = _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+    X = _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r_1)
     return _pls_pipe.predict(X).ravel()
 
 
-def voltaje_kpls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c):
+def voltaje_kpls(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r_1):
     """Predice voltaje usando el modelo KPLS."""
     if not _KPLS_OK:
         return None
-    X = _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+    X = _construir_X(i_arr, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r_1)
     return _kpls_pipe.predict(X).ravel()
 
 def get_data():
@@ -880,7 +881,7 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
 
     # Curva PLS
     if modelo_sel in ('pls', 'ambos') and _PLS_OK:
-        V_pls = voltaje_pls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+        V_pls = voltaje_pls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
         if V_pls is not None:
             P_pls = V_pls * i_range
             fig_dt.add_trace(go.Scatter(
@@ -896,7 +897,7 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
 
     # Curva KPLS
     if modelo_sel in ('kpls', 'ambos') and _KPLS_OK:
-        V_kpls = voltaje_kpls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+        V_kpls = voltaje_kpls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
         if V_kpls is not None:
             P_kpls = V_kpls * i_range
             fig_dt.add_trace(go.Scatter(
@@ -962,14 +963,14 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                     # Métricas PLS
                     r2_p = mae_p = nrmse_p = None
                     if _PLS_OK:
-                        V_pred_p = voltaje_pls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+                        V_pred_p = voltaje_pls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
                         if V_pred_p is not None:
                             r2_p, mae_p, nrmse_p = metricas(df_m['voltaje'].values, V_pred_p)
 
                     # Métricas KPLS
                     r2_k = mae_k = nrmse_k = None
                     if _KPLS_OK:
-                        V_pred_k = voltaje_kpls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c)
+                        V_pred_k = voltaje_kpls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
                         if V_pred_k is not None:
                             r2_k, mae_k, nrmse_k = metricas(df_m['voltaje'].values, V_pred_k)
 
