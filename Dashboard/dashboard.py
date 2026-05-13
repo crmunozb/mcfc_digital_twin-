@@ -733,30 +733,20 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
             except Exception:
                 pass
 
-        # Lanzar simulador con los parametros definidos
-        # Dashboard en .../Dashboard/ — simulador en .../simulador/ (un nivel arriba)
+        # Lanzar reproductor con datos reales de Milewski/Escalona
         _dashboard_dir = os.path.dirname(os.path.abspath(__file__))
         sim_path = os.path.normpath(
-            os.path.join(_dashboard_dir, '..', 'simulador', 'simulador_mcfc.py')
+            os.path.join(_dashboard_dir, '..', 'simulador', 'reproductor_mcfc.py')
         )
-        modo_sim = modo if modo else 'continuo'
+        modo_sim = modo if modo else 'curva'
         cmd = [
             'python3', sim_path,
             '--modo',        modo_sim,
             '--temperatura', str(int(T)),
-            '--h2a',   str(H2a),
-            '--h2oa',  str(H2Oa),
-            '--co2a',  str(CO2a),
-            '--o2c',   str(O2c),
-            '--co2c',  str(CO2c),
-            '--n2c',   str(N2c),
-            '--r1',    str(r1),
-            '--intervalo', '3'
+            '--intervalo',   '3',
         ]
         if modo_sim == 'continuo':
             cmd += ['--corriente', str(corriente)]
-        if modo_sim == 'curva':
-            cmd += ['--ciclos', '1']
         try:
             import time as _time
             t_inicio = datetime.now(timezone.utc)
@@ -768,32 +758,49 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
                 stderr=_log,
                 preexec_fn=os.setsid
             )
-            # Esperar activamente hasta que aparezca un experimento creado DESPUES del inicio
+            # Esperar a que aparezca el nuevo experimento en la BD
             new_exp_id = None
-            for _ in range(15):          # hasta ~15 s
+            id_original = None
+            for _ in range(15):
                 _time.sleep(1)
                 try:
                     conn = psycopg2.connect(**DB_CONFIG)
                     row = pd.read_sql(
                         "SELECT id_experimento FROM experimentos "
-                        "WHERE fuente='udec_lab' AND created_at >= %s "
+                        "WHERE fuente='warsaw_ut' AND created_at >= %s "
                         "ORDER BY created_at DESC LIMIT 1",
                         conn, params=(t_inicio,)
                     )
                     conn.close()
                     if not row.empty:
                         new_exp_id = int(row['id_experimento'].iloc[0])
+                        # Leer ID original del log
+                        try:
+                            with open('/tmp/simulador_mcfc.log', 'r') as f:
+                                for line in f:
+                                    if 'EXP_ORIGINAL=' in line:
+                                        id_original = int(line.strip().split('=')[1])
+                        except Exception:
+                            pass
                         break
                 except Exception:
                     pass
             style = {**status_base, 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
             if new_exp_id:
+                # Leer ID original del archivo
+                id_original = None
+                try:
+                    with open('/tmp/mcfc_exp_original.txt', 'r') as f:
+                        id_original = int(f.read().strip())
+                except Exception:
+                    pass
+                ref = f"Exp {id_original} (Milewski)" if id_original else f"Exp {new_exp_id}"
                 if modo_sim == 'continuo':
-                    label = f'● Simulando (continuo) — T={T}°C | i={corriente:.3f} A/cm² | Exp {new_exp_id}'
+                    label = f'● Reproduciendo datos reales — T={T}°C | i={corriente:.3f} A/cm² | {ref}'
                 else:
-                    label = f'● Simulando (curva) — T={T}°C | Exp {new_exp_id}'
+                    label = f'● Reproduciendo datos reales — T={T}°C | {ref}'
             else:
-                label = f'● Simulando ({modo_sim}) — T={T}°C | exp pendiente'
+                label = f'● Reproduciendo datos reales ({modo_sim}) — T={T}°C | exp pendiente'
             return False, new_exp_id, label, style
         except Exception as ex:
             style = {**status_base, 'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
