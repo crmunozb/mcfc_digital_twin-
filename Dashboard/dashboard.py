@@ -859,7 +859,7 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
         ], style=card_kpi)
 
     # ── Curva DT estática (responde a sliders siempre) ─────────────────────────
-    i_range = np.linspace(0.005, 0.25, 100)
+    i_range = np.linspace(0.005, 0.35, 150)
     modelo_sel = modelo_sel or 'ambos'
 
     fig_dt = go.Figure()
@@ -878,6 +878,17 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
             line=dict(color='#8e44ad', width=2, dash='dash'),
             name='P Nernst', yaxis='y2'
         ))
+        # Punto de máxima potencia Nernst
+        idx_n = int(np.argmax(P_nernst))
+        fig_dt.add_trace(go.Scatter(
+            x=[i_range[idx_n]], y=[P_nernst[idx_n]],
+            mode='markers+text',
+            marker=dict(color='#8e44ad', size=12, symbol='star'),
+            text=[f"Pmax={P_nernst[idx_n]:.4f}"],
+            textposition='top center',
+            textfont=dict(size=10, color='#8e44ad'),
+            name='Pmax Nernst', yaxis='y2', showlegend=False
+        ))
 
     # Curva PLS
     if modelo_sel in ('pls', 'ambos') and _PLS_OK:
@@ -894,6 +905,17 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                 line=dict(color='#16a085', width=2, dash='dash'),
                 name='P PLS', yaxis='y2'
             ))
+            # Punto de máxima potencia PLS
+            idx_p = int(np.argmax(P_pls))
+            fig_dt.add_trace(go.Scatter(
+                x=[i_range[idx_p]], y=[P_pls[idx_p]],
+                mode='markers+text',
+                marker=dict(color='#16a085', size=12, symbol='star'),
+                text=[f"Pmax={P_pls[idx_p]:.4f}"],
+                textposition='top center',
+                textfont=dict(size=10, color='#16a085'),
+                name='Pmax PLS', yaxis='y2', showlegend=False
+            ))
 
     # Curva KPLS
     if modelo_sel in ('kpls', 'ambos') and _KPLS_OK:
@@ -909,6 +931,17 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
                 x=i_range, y=P_kpls, mode='lines',
                 line=dict(color='#d35400', width=2, dash='dash'),
                 name='P KPLS', yaxis='y2'
+            ))
+            # Punto de máxima potencia KPLS
+            idx_k = int(np.argmax(P_kpls))
+            fig_dt.add_trace(go.Scatter(
+                x=[i_range[idx_k]], y=[P_kpls[idx_k]],
+                mode='markers+text',
+                marker=dict(color='#d35400', size=12, symbol='star'),
+                text=[f"Pmax={P_kpls[idx_k]:.4f}"],
+                textposition='top center',
+                textfont=dict(size=10, color='#d35400'),
+                name='Pmax KPLS', yaxis='y2', showlegend=False
             ))
 
     metricas_out = html.P("Ajusta los sliders para ver la curva del modelo DT.",
