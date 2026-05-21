@@ -10,6 +10,10 @@ Entrena un modelo KPLS aproximado sobre el dataset experimental de Milewski usan
 Implementación KPLS aproximada:
     StandardScaler + RBFSampler(RBF) + PLSRegression
 
+Variable objetivo: 'Experiment' — voltaje real medido de la celda bajo carga.
+Nota: NO usar 'E_max' como target, ya que corresponde al voltaje teórico de
+Nernst (caso ideal sin pérdidas), no al voltaje operacional real de la celda.
+
 Uso:
     python3 entrenar_kpls_cv.py
 """
@@ -35,8 +39,8 @@ MODELO_OUT = os.path.join(BASE_DIR, 'kpls_voltaje_cv.pkl')
 
 
 # ── Configuración ──────────────────────────────────────────────────────────────
-FEATURES = ['T', 'H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c', 'i, A/cm²', 'r_1']  # agregado r_1
-TARGET   = 'E_max'  # corregido: voltaje experimental
+FEATURES = ['T', 'H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c', 'i, A/cm²', 'r_1']
+TARGET   = 'Experiment'  # voltaje real medido (no E_max que es el voltaje teórico de Nernst)
 
 TEST_SIZE = 0.20
 RANDOM_STATE = 42

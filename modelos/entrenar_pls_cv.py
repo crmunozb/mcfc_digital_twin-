@@ -1,12 +1,16 @@
 """
 entrenar_pls_cv.py
 ------------------
-Entrena un modelo PLS sobre el dataset experimental de Milewski usando una
+Entrena un modelo PLS sobre el dataset experimental del Profesor Milewski usando una
 validación metodológicamente más robusta:
 
 1) Separación train/test.
 2) Selección del número de componentes PLS usando SOLO train mediante validación cruzada.
 3) Evaluación final UNA SOLA VEZ sobre test.
+
+Variable objetivo: 'Experiment' — voltaje real medido de la celda bajo carga.
+Nota: NO usar 'E_max' como target, ya que corresponde al voltaje teórico de
+Nernst (caso ideal sin pérdidas), no al voltaje operacional real de la celda.
 
 Uso:
     python3 entrenar_pls_cv.py
@@ -32,8 +36,8 @@ MODELO_OUT = os.path.join(BASE_DIR, 'pls_voltaje_cv.pkl')
 
 
 # ── Configuración ──────────────────────────────────────────────────────────────
-FEATURES = ['T', 'H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c', 'i, A/cm²', 'r_1']  # agregado r_1
-TARGET   = 'E_max'  # corregido: voltaje experimental
+FEATURES = ['T', 'H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c', 'i, A/cm²', 'r_1']
+TARGET   = 'Experiment'  # voltaje real medido (no E_max que es el voltaje teórico de Nernst)
 
 TEST_SIZE = 0.20
 RANDOM_STATE = 42

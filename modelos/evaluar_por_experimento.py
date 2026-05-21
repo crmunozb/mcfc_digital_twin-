@@ -1,11 +1,16 @@
 """
 evaluar_por_experimento.py
 --------------------------
-Evalua los tres modelos (Nernst, PLS, KPLS) sobre cada uno de los
-111 experimentos reales de Milewski, usando sus datos experimentales
-directamente desde PostgreSQL.
+Evalua los tres modelos (Nernst, PLS, KPLS) sobre cada una de las
+110 curvas de polarización reales de Milewski, usando sus datos
+experimentales directamente desde PostgreSQL.
 
-Genera un CSV con R2, MAE y NRMSE por experimento y modelo,
+Nota: la columna 'Experiment' del dataset original de Milewski
+corresponde al voltaje operacional medido, no a un ID de ensayo.
+Las 110 curvas fueron identificadas agrupando por combinación única
+de temperatura y composición gaseosa.
+
+Genera un CSV con R2, MAE y NRMSE por curva y modelo,
 y un resumen por temperatura.
 
 Uso:
@@ -41,6 +46,17 @@ PLS_FEATS = pls_data['features']
 print(f"  PLS features:  {PLS_FEATS}")
 print(f"  KPLS features: {kpls_data['features']}")
 
+# ── Validar que el orden de features coincide con lo esperado ──────────────────
+FEATURES_ESPERADAS = ['T', 'H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c', 'i, A/cm²', 'r_1']
+if PLS_FEATS != FEATURES_ESPERADAS:
+    print(f"\nADVERTENCIA: features del modelo PLS no coinciden con las esperadas.")
+    print(f"  Esperadas: {FEATURES_ESPERADAS}")
+    print(f"  En modelo: {PLS_FEATS}")
+if kpls_data['features'] != FEATURES_ESPERADAS:
+    print(f"\nADVERTENCIA: features del modelo KPLS no coinciden con las esperadas.")
+    print(f"  Esperadas: {FEATURES_ESPERADAS}")
+    print(f"  En modelo: {kpls_data['features']}")
+
 # ── Cargar datos desde PostgreSQL ──────────────────────────────────────────────
 print("\nCargando datos desde PostgreSQL...")
 conn = psycopg2.connect(**DB_CONFIG)
@@ -61,7 +77,7 @@ df = pd.read_sql("""
 """, conn)
 conn.close()
 
-print(f"  {len(df)} mediciones de {df['id_experimento'].nunique()} experimentos")
+print(f"  {len(df)} mediciones de {df['id_experimento'].nunique()} curvas de polarización")
 
 # ── Funciones auxiliares ───────────────────────────────────────────────────────
 def nrmse(y_true, y_pred):
@@ -171,7 +187,7 @@ print(f"\nResultados guardados en: {OUT_CSV}")
 print("\n" + "="*60)
 print("RESUMEN GLOBAL")
 print("="*60)
-print(f"Experimentos evaluados: {len(df_res)}")
+print(f"Curvas evaluadas: {len(df_res)}")
 print(f"\n{'Modelo':<10} | {'R2 medio':>10} | {'R2 min':>8} | {'R2 max':>8} | {'MAE medio':>10} | {'n_R2':>6}")
 print("-"*65)
 for m, col_r2, col_mae in [
@@ -217,8 +233,8 @@ print("="*60)
 print(df_res['mejor_modelo'].value_counts().to_string())
 
 n_1punto = len(df_res[df_res['n_puntos'] == 1])
-print(f"\nNota: {n_1punto} experimentos con 1 punto — R² no calculable (NaN), MAE si disponible.")
-print(f"R² calculado sobre {len(df_res['r2_nernst'].dropna())} experimentos con n >= 2 puntos.")
+print(f"\nNota: {n_1punto} curvas con 1 punto — R² no calculable (NaN), MAE sí disponible.")
+print(f"R² calculado sobre {len(df_res['r2_nernst'].dropna())} curvas con n >= 2 puntos.")
 
 elapsed_total = time.time() - t0
 print(f"\nTiempo total: {elapsed_total:.1f}s")
