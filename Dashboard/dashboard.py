@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
+
 import dash
 from dash import dcc, html, Input, Output, State, dash_table
 import plotly.graph_objects as go
@@ -9,6 +12,7 @@ import subprocess
 import os
 import signal
 from datetime import datetime, timezone
+from scipy.optimize import minimize_scalar as _minimize_scalar
 
 # ── Constantes fisicas ─────────────────────────────────────────────────────────
 R_GAS  = 8.314
@@ -148,6 +152,18 @@ exp_summary = df.drop_duplicates('id_experimento')[
      'O2c', 'CO2c', 'N2c', 'H2Oc',
      'E_max', 'i_max', 'r_1', 'r_2']
 ].reset_index(drop=True)
+
+# ── Opciones del dropdown del optimizador (calculadas al arrancar) ─────────────
+_OPT_OPTIONS = [
+    {
+        'label': (f"Exp {row.id_experimento} | T={int(row.T)}°C | "
+                  f"H2a={row.H2a:.2f} | CO2a={row.CO2a:.2f} | "
+                  f"O2c={row.O2c:.2f} | r1={row.r_1:.3f}"),
+        'value': int(row.id_experimento)
+    }
+    for row in exp_summary.sort_values('id_experimento').itertuples()
+]
+_OPT_DEFAULT = _OPT_OPTIONS[0]['value'] if _OPT_OPTIONS else None
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = dash.Dash(__name__)
@@ -321,263 +337,277 @@ app.layout = html.Div([
             ])
         ]),
 
-        # ── TAB 4: Digital Twin ────────────────────────────────────
+        # ── TAB 4: Digital Twin (unificado) ───────────────────────
         dcc.Tab(label='Digital Twin', children=[
             html.Div([
 
-                # Intervalo de auto-refresh para la simulacion
                 dcc.Interval(id='dt-sim-interval', interval=5_000,
                              n_intervals=0, disabled=True),
 
                 # Store para guardar el id del experimento simulado activo
                 dcc.Store(id='dt-sim-exp-id', data=None),
 
+                # Store para guardar el último exp_id reproducido (persiste al detener)
+                dcc.Store(id='dt-last-exp-id', data=None),
+
+                # ══ BANNER DE ESTADO ══════════════════════════════════════════
+                html.Div([
+                    html.Div([
+                        html.Div(id='dt-banner-identidad',
+                                 style={'fontWeight': 'bold', 'fontSize': '15px',
+                                        'color': 'white'}),
+                        html.Div(id='dt-banner-detalle',
+                                 style={'fontSize': '12px', 'color': '#d5f5e3',
+                                        'marginTop': '2px'}),
+                    ], style={'flex': '1'}),
+                    html.Div(id='dt-banner-semaforo',
+                             style={'fontSize': '28px', 'marginLeft': '16px'}),
+                ], style={
+                    'display': 'flex', 'alignItems': 'center',
+                    'backgroundColor': '#1abc9c', 'borderRadius': '10px',
+                    'padding': '12px 20px', 'marginBottom': '16px',
+                }),
+
+                # ══ FILA CENTRAL: Panel control + Gemelo digital ══════════════
                 html.Div([
 
-                    # ── Panel izquierdo: sliders + botones ────────
+                    # ── Panel de control (izquierda) ──────────────────────────
                     html.Div([
-                        html.H4("Condiciones de operacion",
-                                style={'fontFamily': 'Arial', 'color': '#2c3e50',
-                                       'marginBottom': '8px'}),
-
-                        html.Label('Temperatura T (°C)', style=SL),
-                        dcc.Slider(id='dt-T', min=550, max=650, step=25, value=650,
-                                   marks={t: f'{t}' for t in [550, 575, 600, 625, 650]}),
-
-                        html.Label('H2 anodo (H2a)', style=SL),
-                        dcc.Slider(id='dt-H2a', min=0.5, max=4.5, step=0.1, value=2.2,
-                                   marks={v: str(v) for v in [0.5, 1.5, 2.5, 3.5, 4.5]}),
-
-                        html.Label('H2O anodo (H2Oa)', style=SL),
-                        dcc.Slider(id='dt-H2Oa', min=0.05, max=1.3, step=0.05, value=0.41,
-                                   marks={v: str(round(v, 2)) for v in [0.05, 0.5, 1.0, 1.3]}),
-
-                        html.Label('CO2 anodo (CO2a)', style=SL),
-                        dcc.Slider(id='dt-CO2a', min=0.05, max=1.1, step=0.05, value=0.55,
-                                   marks={v: str(round(v, 2)) for v in [0.05, 0.3, 0.6, 1.1]}),
-
-                        html.Label('O2 catodo (O2c)', style=SL),
-                        dcc.Slider(id='dt-O2c', min=0.1, max=5.3, step=0.1, value=1.3,
-                                   marks={v: str(v) for v in [0.1, 1.5, 3.0, 5.3]}),
-
-                        html.Label('CO2 catodo (CO2c)', style=SL),
-                        dcc.Slider(id='dt-CO2c', min=0.3, max=14.0, step=0.2, value=2.15,
-                                   marks={v: str(v) for v in [0.3, 3.0, 7.0, 14.0]}),
-
-                        html.Label('N2 catodo (N2c)', style=SL),
-                        dcc.Slider(id='dt-N2c', min=0.5, max=29.0, step=0.5, value=4.87,
-                                   marks={v: str(v) for v in [0.5, 5, 15, 29]}),
-
-                        html.Label('Resistencia ohmica r1 (Ohm·cm2)', style=SL),
-                        dcc.Slider(id='dt-r1', min=1.8, max=3.0, step=0.05, value=1.97,
-                                   marks={v: str(round(v, 2)) for v in [1.8, 2.0, 2.5, 3.0]}),
-
-                        html.Label('Densidad de corriente de operacion i (A/cm²)', style=SL),
-                        dcc.Slider(id='dt-corriente', min=0.005, max=0.200, step=0.005, value=0.100,
-                                   marks={v: str(round(v, 3)) for v in [0.005, 0.05, 0.10, 0.15, 0.200]}),
-
-                        html.Label('Modelo de prediccion', style={**SL, 'marginTop': '12px'}),
-                        dcc.RadioItems(
-                            id='dt-modelo',
-                            options=[
-                                {'label': '  Nernst (físico)', 'value': 'nernst'},
-                                {'label': '  PLS (datos)',     'value': 'pls'},
-                                {'label': '  KPLS (kernel)',   'value': 'kpls'},
-                                {'label': '  Todos',           'value': 'ambos'},
-                            ],
-                            value='ambos',
-                            style={'fontFamily': 'Arial', 'fontSize': '12px',
-                                   'color': '#2c3e50', 'marginBottom': '8px'},
-                            labelStyle={'display': 'block', 'marginBottom': '4px'}
-                        ),
-
-                        html.Label('Modo de simulacion', style={**SL, 'marginTop': '4px'}),
-                        dcc.RadioItems(
-                            id='dt-modo',
-                            options=[
-                                {'label': '  Continuo (corriente fija)', 'value': 'continuo'},
-                                {'label': '  Curva (21 puntos i)',        'value': 'curva'},
-                            ],
-                            value='continuo',
-                            style={'fontFamily': 'Arial', 'fontSize': '12px',
-                                   'color': '#2c3e50', 'marginBottom': '8px'},
-                            labelStyle={'display': 'block', 'marginBottom': '4px'}
-                        ),
-
-                        # Botones simulacion
                         html.Div([
-                            html.Button(
-                                '▶  Iniciar Simulacion',
-                                id='btn-iniciar-sim',
-                                n_clicks=0,
-                                style={
-                                    'marginTop': '20px', 'width': '100%',
-                                    'padding': '10px',
-                                    'backgroundColor': '#27ae60',
-                                    'color': 'white', 'border': 'none',
-                                    'borderRadius': '6px', 'fontFamily': 'Arial',
-                                    'fontSize': '13px', 'cursor': 'pointer',
-                                    'fontWeight': 'bold'
-                                }
-                            ),
-                            html.Button(
-                                '■  Detener',
-                                id='btn-detener-sim',
-                                n_clicks=0,
-                                style={
-                                    'marginTop': '8px', 'width': '100%',
-                                    'padding': '10px',
-                                    'backgroundColor': '#e74c3c',
-                                    'color': 'white', 'border': 'none',
-                                    'borderRadius': '6px', 'fontFamily': 'Arial',
-                                    'fontSize': '13px', 'cursor': 'pointer',
-                                    'fontWeight': 'bold'
-                                }
-                            ),
-                        ]),
 
-                        # Estado simulador
-                        html.Div(id='sim-status', style={
-                            'fontFamily': 'Arial', 'fontSize': '12px',
-                            'marginTop': '10px', 'textAlign': 'center',
-                            'padding': '8px', 'borderRadius': '6px',
-                            'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'
-                        }),
-
-                        # Boton cargar experimento cercano
-                        html.Button(
-                            'Cargar experimento mas cercano',
-                            id='btn-cargar-exp',
-                            n_clicks=0,
-                            style={
-                                'marginTop': '16px', 'width': '100%',
-                                'padding': '10px',
-                                'backgroundColor': '#2980b9',
-                                'color': 'white', 'border': 'none',
-                                'borderRadius': '6px', 'fontFamily': 'Arial',
-                                'fontSize': '13px', 'cursor': 'pointer',
-                                'fontWeight': 'bold'
-                            }
-                        ),
-                        html.Div(id='btn-feedback', style={
-                            'fontFamily': 'Arial', 'fontSize': '12px',
-                            'color': '#27ae60', 'marginTop': '6px',
-                            'textAlign': 'center'
-                        }),
-
-                    ], style={**SP, 'width': '28%'}),
-
-                    # ── Panel derecho: curva DT + visor variables ──
-                    html.Div([
-
-                        # Curva DT
-                        html.Div([
-                            dcc.Graph(id='dt-graph', style={'height': '360px'}),
-                            html.Div(id='dt-metricas', style={
-                                'fontFamily': 'Arial', 'fontSize': '14px',
-                                'backgroundColor': '#f0f4f8', 'borderRadius': '8px',
-                                'padding': '16px', 'marginTop': '8px'
-                            })
-                        ], style=CARD_STYLE),
-
-                        # ── Visor de variables en tiempo real ─────
-                        html.Div([
-                            html.H4("Variables en tiempo real",
+                            # Selector de experimento
+                            html.H4("Panel de control",
                                     style={'fontFamily': 'Arial', 'color': '#2c3e50',
-                                           'marginBottom': '12px'}),
-
-                            # KPIs instantaneos
-                            html.Div(id='sim-kpis', style={
-                                'display': 'flex', 'gap': '10px',
-                                'flexWrap': 'nowrap', 'marginBottom': '12px'
+                                           'marginBottom': '10px', 'marginTop': '0px'}),
+                            html.Label('Experimento', style=SL),
+                            dcc.Dropdown(
+                                id='dt-exp-selector',
+                                options=_OPT_OPTIONS,
+                                value=_OPT_DEFAULT,
+                                clearable=False,
+                                style={'fontFamily': 'Arial', 'fontSize': '12px',
+                                       'marginTop': '4px', 'marginBottom': '8px'}
+                            ),
+                            html.Button(
+                                '↓ Cargar condiciones',
+                                id='btn-cargar-exp',
+                                n_clicks=0,
+                                style={
+                                    'width': '100%', 'padding': '8px',
+                                    'backgroundColor': '#2980b9',
+                                    'color': 'white', 'border': 'none',
+                                    'borderRadius': '6px', 'fontFamily': 'Arial',
+                                    'fontSize': '12px', 'cursor': 'pointer',
+                                    'marginBottom': '4px'
+                                }
+                            ),
+                            html.Div(id='btn-feedback', style={
+                                'fontFamily': 'Arial', 'fontSize': '11px',
+                                'color': '#27ae60', 'marginBottom': '8px',
+                                'textAlign': 'center'
                             }),
 
-                            # Graficos voltaje y potencia en tiempo real
+                            # Sliders de condiciones
+                            html.Div([
+                                html.Label('Condiciones (ajustables)',
+                                           style={**SL, 'marginTop': '4px',
+                                                  'fontSize': '12px', 'color': '#555'}),
+                                html.Label('T (°C)', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-T', min=550, max=650, step=25,
+                                           value=650,
+                                           marks={t: f'{t}' for t in [550,575,600,625,650]},
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('H2a', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-H2a', min=0.5, max=4.5, step=0.1,
+                                           value=2.2, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('H2Oa', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-H2Oa', min=0.05, max=1.3, step=0.05,
+                                           value=0.41, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('CO2a', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-CO2a', min=0.05, max=1.1, step=0.05,
+                                           value=0.55, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('O2c', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-O2c', min=0.1, max=5.3, step=0.1,
+                                           value=1.3, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('CO2c', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-CO2c', min=0.3, max=14.0, step=0.2,
+                                           value=2.15, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('N2c', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-N2c', min=0.5, max=29.0, step=0.5,
+                                           value=4.87, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('r₁ (Ω·cm²)', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-r1', min=1.8, max=3.0, step=0.05,
+                                           value=1.97, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                                html.Label('i (A/cm²)', style={**SL, 'fontSize': '11px'}),
+                                dcc.Slider(id='dt-corriente', min=0.005, max=0.200,
+                                           step=0.005, value=0.100, marks=None,
+                                           tooltip={'placement': 'bottom',
+                                                    'always_visible': False}),
+                            ], style={'backgroundColor': '#f8f9fa', 'borderRadius': '8px',
+                                      'padding': '10px', 'marginBottom': '10px'}),
+
+                            # Selector de modelo
+                            html.Label('Modelo', style={**SL, 'marginTop': '4px'}),
+                            dcc.RadioItems(
+                                id='dt-modelo',
+                                options=[
+                                    {'label': ' Nernst', 'value': 'nernst'},
+                                    {'label': ' PLS',    'value': 'pls'},
+                                    {'label': ' KPLS',   'value': 'kpls'},
+                                    {'label': ' Todos',  'value': 'ambos'},
+                                ],
+                                value='ambos',
+                                style={'fontFamily': 'Arial', 'fontSize': '12px',
+                                       'color': '#2c3e50'},
+                                labelStyle={'display': 'inline-block',
+                                            'marginRight': '8px'}
+                            ),
+
+                            # Selector de modo
+                            html.Label('Modo', style={**SL, 'marginTop': '8px'}),
+                            dcc.RadioItems(
+                                id='dt-modo',
+                                options=[
+                                    {'label': ' Continuo', 'value': 'continuo'},
+                                    {'label': ' Curva',    'value': 'curva'},
+                                ],
+                                value='continuo',
+                                style={'fontFamily': 'Arial', 'fontSize': '12px',
+                                       'color': '#2c3e50'},
+                                labelStyle={'display': 'inline-block',
+                                            'marginRight': '12px'}
+                            ),
+
+                            # Botones iniciar / detener
+                            html.Div([
+                                html.Button('▶ Iniciar', id='btn-iniciar-sim',
+                                            n_clicks=0,
+                                            style={
+                                                'marginTop': '12px', 'width': '48%',
+                                                'padding': '9px',
+                                                'backgroundColor': '#27ae60',
+                                                'color': 'white', 'border': 'none',
+                                                'borderRadius': '6px',
+                                                'fontFamily': 'Arial', 'fontSize': '12px',
+                                                'cursor': 'pointer', 'fontWeight': 'bold'
+                                            }),
+                                html.Button('■ Detener', id='btn-detener-sim',
+                                            n_clicks=0,
+                                            style={
+                                                'marginTop': '12px', 'width': '48%',
+                                                'marginLeft': '4%', 'padding': '9px',
+                                                'backgroundColor': '#e74c3c',
+                                                'color': 'white', 'border': 'none',
+                                                'borderRadius': '6px',
+                                                'fontFamily': 'Arial', 'fontSize': '12px',
+                                                'cursor': 'pointer', 'fontWeight': 'bold'
+                                            }),
+                            ], style={'display': 'flex'}),
+
+                            # Estado del simulador
+                            html.Div(id='sim-status', style={
+                                'fontFamily': 'Arial', 'fontSize': '11px',
+                                'marginTop': '8px', 'textAlign': 'center',
+                                'padding': '6px', 'borderRadius': '6px',
+                                'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'
+                            }),
+
+                        ], style={**CARD_STYLE, 'padding': '14px'})
+                    ], style={'width': '26%', 'display': 'inline-block',
+                              'verticalAlign': 'top'}),
+
+                    # ── Gemelo digital (derecha) ──────────────────────────────
+                    html.Div([
+
+                        # Curva DT + métricas
+                        html.Div([
+                            html.Div([
+                                dcc.Graph(id='dt-graph', style={'height': '340px'})
+                            ], style={'width': '65%', 'display': 'inline-block',
+                                      'verticalAlign': 'top'}),
+                            html.Div([
+                                html.Div(id='dt-metricas', style={
+                                    'fontFamily': 'Arial', 'fontSize': '13px',
+                                    'height': '340px', 'overflowY': 'auto'
+                                })
+                            ], style={'width': '33%', 'display': 'inline-block',
+                                      'verticalAlign': 'top', 'marginLeft': '2%'}),
+                        ], style=CARD_STYLE),
+
+                        # Variables en tiempo real
+                        html.Div([
+                            html.H5("Variables en tiempo real",
+                                    style={'fontFamily': 'Arial', 'color': '#2c3e50',
+                                           'marginBottom': '10px', 'marginTop': '0px'}),
+                            html.Div(id='sim-kpis', style={
+                                'display': 'flex', 'gap': '8px',
+                                'marginBottom': '10px'
+                            }),
                             html.Div([
                                 html.Div([
                                     dcc.Graph(id='sim-voltaje-graph',
-                                              style={'height': '220px'})
+                                              style={'height': '180px'})
                                 ], style={'width': '49%', 'display': 'inline-block'}),
                                 html.Div([
                                     dcc.Graph(id='sim-potencia-graph',
-                                              style={'height': '220px'})
+                                              style={'height': '180px'})
                                 ], style={'width': '49%', 'display': 'inline-block',
                                           'marginLeft': '2%'}),
                             ]),
-
-                            # Tabla de mediciones recientes
-                            html.Div([
-                                html.H5("Ultimas mediciones",
-                                        style={'fontFamily': 'Arial',
-                                               'color': '#555', 'marginBottom': '8px'}),
-                                html.Div(id='sim-tabla-mediciones')
-                            ], style={'marginTop': '12px'})
-
                         ], style=CARD_STYLE),
 
-                    ], style={'width': '70%', 'display': 'inline-block',
-                              'verticalAlign': 'top', 'paddingLeft': '16px'})
+                    ], style={'width': '72%', 'display': 'inline-block',
+                              'verticalAlign': 'top', 'paddingLeft': '14px'}),
 
-                ], style={'display': 'flex', 'alignItems': 'flex-start'})
-
-            ], style={'padding': '20px'})
-        ]),
-
-        # ── TAB 5: Monitoreo Live ──────────────────────────────────
-        dcc.Tab(label='Monitoreo Live', children=[
-            html.Div([
-                dcc.Interval(id='live-interval', interval=10_000, n_intervals=0),
-                html.Div([
-                    html.Div([
-                        html.H4("Sesión activa",
-                                style={'fontFamily': 'Arial', 'color': '#2c3e50',
-                                       'marginBottom': '8px'}),
-                        html.Label('Experimento (udec_lab)', style=SL),
-                        dcc.Dropdown(
-                            id='live-exp-selector',
-                            placeholder='Seleccionar experimento...',
-                            clearable=False,
-                            style={'fontFamily': 'Arial', 'marginTop': '6px'}
-                        ),
-                        html.Div(id='live-exp-info', style={
-                            'fontFamily': 'Arial', 'fontSize': '12px',
-                            'color': '#555', 'marginTop': '10px',
-                            'backgroundColor': '#f8f9fa', 'borderRadius': '6px',
-                            'padding': '10px'
-                        }),
-                        html.Div([
-                            html.Span("● ", style={'color': '#27ae60'}),
-                            html.Span(id='live-status',
-                                      style={'fontFamily': 'Arial',
-                                             'fontSize': '12px', 'color': '#27ae60'})
-                        ], style={'marginTop': '12px'}),
-                    ], style={**SP, 'width': '26%'}),
-                    html.Div([
-                        html.H4("Última medición",
-                                style={'fontFamily': 'Arial', 'color': '#2c3e50',
-                                       'marginBottom': '12px'}),
-                        html.Div(id='live-kpis')
-                    ], style={'width': '70%', 'display': 'inline-block',
-                              'verticalAlign': 'top', 'padding': '20px'})
                 ], style={'display': 'flex', 'alignItems': 'flex-start',
                           'marginBottom': '16px'}),
+
+                # ══ ZONA OPERACIÓN ÓPTIMA ═════════════════════════════════════
                 html.Div([
                     html.Div([
-                        dcc.Graph(id='live-voltaje', style={'height': '280px'})
-                    ], style={'width': '49%', 'display': 'inline-block'}),
-                    html.Div([
-                        dcc.Graph(id='live-potencia', style={'height': '280px'})
-                    ], style={'width': '49%', 'display': 'inline-block',
-                              'marginLeft': '2%'}),
+                        html.H4("Operación óptima",
+                                style={'fontFamily': 'Arial', 'color': '#2c3e50',
+                                       'marginBottom': '4px', 'marginTop': '0px'}),
+                        html.P("Para las condiciones activas, calcula j* que maximiza "
+                               "p = V · j dentro del rango experimental [0.005, 0.200] A/cm².",
+                               style={'fontFamily': 'Arial', 'color': '#7f8c8d',
+                                      'fontSize': '12px', 'marginBottom': '12px'}),
+                        html.Div([
+                            # Resultados tabla
+                            html.Div([
+                                html.Div(id='opt-resultados',
+                                         style={'fontFamily': 'Arial'})
+                            ], style={'width': '42%', 'display': 'inline-block',
+                                      'verticalAlign': 'top'}),
+                            # Gráfico p(j)
+                            html.Div([
+                                dcc.Graph(id='opt-graph', style={'height': '280px'})
+                            ], style={'width': '56%', 'display': 'inline-block',
+                                      'verticalAlign': 'top', 'marginLeft': '2%'}),
+                        ]),
+                    ], style=CARD_STYLE),
                 ]),
-                html.Div([
-                    dcc.Graph(id='live-polar', style={'height': '320px'})
-                ], style={'marginTop': '10px'})
-            ], style={'padding': '20px'})
+
+            ], style={'padding': '16px'})
         ]),
 
     ])
-], style={'maxWidth': '1200px', 'margin': 'auto', 'padding': '20px'})
+], style={'maxWidth': '1280px', 'margin': 'auto', 'padding': '20px'})
 
 
 # ── Callback Tab 3: Filtros de experimentos ───────────────────────────────────
@@ -696,26 +726,19 @@ def update_var(var):
 @app.callback(
     Output('dt-sim-interval', 'disabled'),
     Output('dt-sim-exp-id',   'data'),
+    Output('dt-last-exp-id',  'data'),
     Output('sim-status',      'children'),
     Output('sim-status',      'style'),
     Input('btn-iniciar-sim',  'n_clicks'),
     Input('btn-detener-sim',  'n_clicks'),
-    State('dt-T',    'value'),
-    State('dt-H2a',  'value'),
-    State('dt-H2Oa', 'value'),
-    State('dt-CO2a', 'value'),
-    State('dt-O2c',  'value'),
-    State('dt-CO2c', 'value'),
-    State('dt-N2c',  'value'),
-    State('dt-r1',   'value'),
-    State('dt-corriente', 'value'),
-    State('dt-modo',       'value'),
-    State('dt-sim-exp-id', 'data'),
+    State('dt-exp-selector',  'value'),
+    State('dt-modo',          'value'),
+    State('dt-sim-exp-id',    'data'),
+    State('dt-last-exp-id',   'data'),
     prevent_initial_call=True
 )
-def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, corriente, modo, exp_id_actual):
-    global _sim_process
-
+def controlar_simulador(n_ini, n_det, exp_id_sel, modo,
+                         exp_id_actual, last_exp_id):
     from dash import ctx
     triggered = ctx.triggered_id
 
@@ -726,107 +749,120 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
     }
 
     if triggered == 'btn-iniciar-sim':
-        # Detener proceso anterior si existe
-        if _sim_process and _sim_process.poll() is None:
-            try:
-                os.killpg(os.getpgid(_sim_process.pid), signal.SIGTERM)
-            except Exception:
-                pass
+        if exp_id_sel is None:
+            style = {**status_base,
+                     'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
+            return True, None, last_exp_id, \
+                   'Selecciona un experimento primero', style
 
-        # Lanzar reproductor con datos reales de Milewski/Escalona
-        _dashboard_dir = os.path.dirname(os.path.abspath(__file__))
-        sim_path = os.path.normpath(
-            os.path.join(_dashboard_dir, '..', 'simulador', 'reproductor_mcfc.py')
-        )
-        modo_sim = modo if modo else 'curva'
-        cmd = [
-            'python3', sim_path,
-            '--modo',        modo_sim,
-            '--temperatura', str(int(T)),
-            '--intervalo',   '3',
-        ]
-        if modo_sim == 'continuo':
-            cmd += ['--corriente', str(corriente)]
-        try:
-            import time as _time
-            t_inicio = datetime.now(timezone.utc)
-            # Redirigir stderr a log para diagnóstico
-            import tempfile
-            _log = open('/tmp/simulador_mcfc.log', 'w')
-            _sim_process = subprocess.Popen(
-                cmd, stdout=_log,
-                stderr=_log,
-                preexec_fn=os.setsid
-            )
-            # Esperar a que aparezca el nuevo experimento en la BD
-            new_exp_id = None
-            id_original = None
-            for _ in range(15):
-                _time.sleep(1)
-                try:
-                    conn = psycopg2.connect(**DB_CONFIG)
-                    row = pd.read_sql(
-                        "SELECT id_experimento FROM experimentos "
-                        "WHERE fuente='warsaw_ut' AND created_at >= %s "
-                        "ORDER BY created_at DESC LIMIT 1",
-                        conn, params=(t_inicio,)
-                    )
-                    conn.close()
-                    if not row.empty:
-                        new_exp_id = int(row['id_experimento'].iloc[0])
-                        # Leer ID original del log
-                        try:
-                            with open('/tmp/simulador_mcfc.log', 'r') as f:
-                                for line in f:
-                                    if 'EXP_ORIGINAL=' in line:
-                                        id_original = int(line.strip().split('=')[1])
-                        except Exception:
-                            pass
-                        break
-                except Exception:
-                    pass
-            style = {**status_base, 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
-            if new_exp_id:
-                # Leer ID original del archivo
-                id_original = None
-                try:
-                    with open('/tmp/mcfc_exp_original.txt', 'r') as f:
-                        id_original = int(f.read().strip())
-                except Exception:
-                    pass
-                ref = f"Exp {id_original} (Milewski)" if id_original else f"Exp {new_exp_id}"
-                if modo_sim == 'continuo':
-                    label = f'● Reproduciendo datos reales — T={T}°C | i={corriente:.3f} A/cm² | {ref}'
-                else:
-                    label = f'● Reproduciendo datos reales — T={T}°C | {ref}'
-            else:
-                label = f'● Reproduciendo datos reales ({modo_sim}) — T={T}°C | exp pendiente'
-            return False, new_exp_id, label, style
-        except Exception as ex:
-            style = {**status_base, 'backgroundColor': '#fde8e8', 'color': '#e74c3c'}
-            return True, None, f'Error al iniciar: {str(ex)[:60]}', style
+        # Leer info del experimento para el label
+        fila = exp_summary[exp_summary['id_experimento'] == exp_id_sel]
+        T_label   = int(fila.iloc[0]['T']) if not fila.empty else '?'
+        modo_label = modo if modo else 'curva'
+
+        style = {**status_base,
+                 'backgroundColor': '#d5f5e3', 'color': '#1e8449'}
+        label = (f'● Reproduciendo Exp {exp_id_sel} (Milewski) — '
+                 f'T={T_label}°C | modo {modo_label}')
+
+        # Usar directamente el experimento original de Milewski
+        return False, exp_id_sel, exp_id_sel, label, style
 
     elif triggered == 'btn-detener-sim':
-        if _sim_process and _sim_process.poll() is None:
-            try:
-                os.killpg(os.getpgid(_sim_process.pid), signal.SIGTERM)
-            except Exception:
-                pass
-        style = {**status_base, 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
-        return True, None, '■ Simulacion detenida', style
+        style = {**status_base,
+                 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
+        ultimo = exp_id_actual or last_exp_id
+        label  = '■ Simulación detenida'
+        if ultimo:
+            label += f' — último exp: Exp {ultimo} (Milewski)'
+        return True, None, ultimo, label, style
 
     style = {**status_base, 'backgroundColor': '#f8f9fa', 'color': '#7f8c8d'}
-    return True, None, 'Sin simulacion activa', style
+    return True, None, last_exp_id, 'Sin simulación activa', style
 
 
-# Actualizar curva DT + visor de variables en tiempo real
+
+# ── Callback: cargar experimento desde dropdown ────────────────────────────────
+# ── Callback: cargar experimento desde dropdown ────────────────────────────────
 @app.callback(
-    Output('dt-graph',            'figure'),
-    Output('dt-metricas',         'children'),
-    Output('sim-kpis',            'children'),
-    Output('sim-voltaje-graph',   'figure'),
-    Output('sim-potencia-graph',  'figure'),
-    Output('sim-tabla-mediciones','children'),
+    Output('dt-T',       'value'),
+    Output('dt-H2a',     'value'),
+    Output('dt-H2Oa',    'value'),
+    Output('dt-CO2a',    'value'),
+    Output('dt-O2c',     'value'),
+    Output('dt-CO2c',    'value'),
+    Output('dt-N2c',     'value'),
+    Output('dt-r1',      'value'),
+    Output('btn-feedback','children'),
+    Input('btn-cargar-exp',   'n_clicks'),
+    State('dt-exp-selector',  'value'),
+    prevent_initial_call=True
+)
+def cargar_experimento_desde_dropdown(n_clicks, exp_id):
+    if exp_id is None:
+        return (650, 2.2, 0.41, 0.55, 1.3, 2.15, 4.87, 1.97,
+                'Selecciona un experimento')
+    fila = exp_summary[exp_summary['id_experimento'] == exp_id]
+    if fila.empty:
+        return (650, 2.2, 0.41, 0.55, 1.3, 2.15, 4.87, 1.97,
+                'Experimento no encontrado')
+    row = fila.iloc[0]
+    return (
+        int(row['T']),
+        round(float(row['H2a']),  3),
+        round(float(row['H2Oa']), 3),
+        round(float(row['CO2a']), 3),
+        round(float(row['O2c']),  3),
+        round(float(row['CO2c']), 3),
+        round(float(row['N2c']),  3),
+        round(float(row['r_1']),  3),
+        f"✓ Cargado: Exp {exp_id} (T={int(row['T'])}°C)"
+    )
+
+
+
+
+# ── Callback: banner de estado ─────────────────────────────────────────────────
+@app.callback(
+    Output('dt-banner-identidad', 'children'),
+    Output('dt-banner-detalle',   'children'),
+    Output('dt-banner-semaforo',  'children'),
+    Input('dt-sim-interval', 'n_intervals'),
+    Input('dt-sim-exp-id',   'data'),
+    State('dt-T',     'value'),
+    State('dt-modelo','value'),
+)
+def actualizar_banner(n, exp_id_sim, T, modelo_sel):
+    modelo_label = {
+        'nernst': 'Nernst (físico)',
+        'pls':    'PLS (datos)',
+        'kpls':   'KPLS (kernel)',
+        'ambos':  'Todos los modelos',
+    }.get(modelo_sel or 'ambos', 'Todos los modelos')
+
+    identidad = "Digital Twin — Celda MCFC · Universidad de Concepción"
+
+    if exp_id_sim is not None:
+        ts = datetime.now().strftime('%H:%M:%S')
+        detalle = (f"Exp {exp_id_sim} activo · T={T}°C · "
+                   f"Modelo: {modelo_label} · Última actualización: {ts}")
+        semaforo = "🟢"
+    else:
+        detalle = f"Sin simulación activa · T={T}°C · Modelo: {modelo_label}"
+        semaforo = "🔴"
+
+    return identidad, detalle, semaforo
+
+
+# ── Callback: Digital Twin principal (curvas + métricas + KPIs + tiempo real) ──
+@app.callback(
+    Output('dt-graph',           'figure'),
+    Output('dt-metricas',        'children'),
+    Output('sim-kpis',           'children'),
+    Output('sim-voltaje-graph',  'figure'),
+    Output('sim-potencia-graph', 'figure'),
+    Output('opt-resultados',     'children'),
+    Output('opt-graph',          'figure'),
     Input('dt-sim-interval', 'n_intervals'),
     Input('dt-T',    'value'),
     Input('dt-H2a',  'value'),
@@ -836,22 +872,26 @@ def controlar_simulador(n_ini, n_det, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, co
     Input('dt-CO2c', 'value'),
     Input('dt-N2c',  'value'),
     Input('dt-r1',   'value'),
-    Input('dt-sim-exp-id', 'data'),   # Input (no State) → dispara al cambiar exp_id
+    Input('dt-sim-exp-id', 'data'),
     Input('dt-modelo',     'value'),
+    State('dt-exp-selector',  'value'),
+    State('dt-last-exp-id',   'data'),
 )
-def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_sel):
+def actualizar_dt_completo(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
+                            exp_id_sim, modelo_sel, exp_id_dropdown,
+                            last_exp_id):
 
     fig_empty = go.Figure()
     fig_empty.update_layout(
         template='plotly_white', font=dict(family='Arial'),
-        annotations=[dict(text='Inicia la simulacion para ver datos',
+        annotations=[dict(text='Inicia la simulación para ver datos',
                          showarrow=False, font=dict(size=13, color='#aaa'),
                          xref='paper', yref='paper', x=0.5, y=0.5)]
     )
 
     card_kpi = {
         'display': 'inline-block', 'textAlign': 'center',
-        'width': '22%', 'padding': '12px',
+        'width': '22%', 'padding': '10px',
         'backgroundColor': 'white', 'borderRadius': '10px',
         'boxShadow': '0 2px 6px rgba(0,0,0,0.08)',
     }
@@ -860,271 +900,303 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
         return html.Div([
             html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '11px',
                                     'color': '#7f8c8d', 'marginBottom': '4px'}),
-            html.Div(valor,  style={'fontSize': '22px', 'fontWeight': 'bold',
+            html.Div(valor,  style={'fontSize': '20px', 'fontWeight': 'bold',
                                     'color': color}),
             html.Div(unidad, style={'fontSize': '10px', 'color': '#aaa'}),
         ], style=card_kpi)
 
-    # ── Curva DT estática (responde a sliders siempre) ─────────────────────────
-    i_range = np.linspace(0.005, 0.35, 150)
+    # ── Curva DT (responde a sliders siempre) ─────────────────────────────────
+    i_range   = np.linspace(0.005, 0.35, 150)
     modelo_sel = modelo_sel or 'ambos'
+    fig_dt    = go.Figure()
 
-    fig_dt = go.Figure()
-
-    # Curva Nernst
     if modelo_sel in ('nernst', 'ambos'):
         V_nernst = voltaje_modelo(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, r1)
         P_nernst = V_nernst * i_range
-        fig_dt.add_trace(go.Scatter(
-            x=i_range, y=V_nernst, mode='lines',
+        fig_dt.add_trace(go.Scatter(x=i_range, y=V_nernst, mode='lines',
             line=dict(color='#e74c3c', width=2.5, dash='dot'),
-            name='Nernst (físico)', yaxis='y1'
-        ))
-        fig_dt.add_trace(go.Scatter(
-            x=i_range, y=P_nernst, mode='lines',
+            name='Nernst (físico)', yaxis='y1'))
+        fig_dt.add_trace(go.Scatter(x=i_range, y=P_nernst, mode='lines',
             line=dict(color='#8e44ad', width=2, dash='dash'),
-            name='P Nernst', yaxis='y2'
-        ))
-        # Punto de máxima potencia Nernst
+            name='P Nernst', yaxis='y2'))
         idx_n = int(np.argmax(P_nernst))
         fig_dt.add_trace(go.Scatter(
-            x=[i_range[idx_n]], y=[P_nernst[idx_n]],
-            mode='markers+text',
+            x=[i_range[idx_n]], y=[P_nernst[idx_n]], mode='markers+text',
             marker=dict(color='#8e44ad', size=12, symbol='star'),
-            text=[f"Pmax={P_nernst[idx_n]:.4f}"],
-            textposition='top center',
-            textfont=dict(size=10, color='#8e44ad'),
-            name='Pmax Nernst', yaxis='y2', showlegend=False
-        ))
+            text=[f"Pmax={P_nernst[idx_n]:.4f}"], textposition='top center',
+            textfont=dict(size=9, color='#8e44ad'),
+            name='Pmax Nernst', yaxis='y2', showlegend=False))
 
-    # Curva PLS
     if modelo_sel in ('pls', 'ambos') and _PLS_OK:
         V_pls = voltaje_pls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
         if V_pls is not None:
             P_pls = V_pls * i_range
-            fig_dt.add_trace(go.Scatter(
-                x=i_range, y=V_pls, mode='lines',
-                line=dict(color='#2980b9', width=2.5),
-                name='PLS (datos)', yaxis='y1'
-            ))
-            fig_dt.add_trace(go.Scatter(
-                x=i_range, y=P_pls, mode='lines',
+            fig_dt.add_trace(go.Scatter(x=i_range, y=V_pls, mode='lines',
+                line=dict(color='#2980b9', width=2.5), name='PLS (datos)', yaxis='y1'))
+            fig_dt.add_trace(go.Scatter(x=i_range, y=P_pls, mode='lines',
                 line=dict(color='#16a085', width=2, dash='dash'),
-                name='P PLS', yaxis='y2'
-            ))
-            # Punto de máxima potencia PLS
+                name='P PLS', yaxis='y2'))
             idx_p = int(np.argmax(P_pls))
             fig_dt.add_trace(go.Scatter(
-                x=[i_range[idx_p]], y=[P_pls[idx_p]],
-                mode='markers+text',
+                x=[i_range[idx_p]], y=[P_pls[idx_p]], mode='markers+text',
                 marker=dict(color='#16a085', size=12, symbol='star'),
-                text=[f"Pmax={P_pls[idx_p]:.4f}"],
-                textposition='top center',
-                textfont=dict(size=10, color='#16a085'),
-                name='Pmax PLS', yaxis='y2', showlegend=False
-            ))
+                text=[f"Pmax={P_pls[idx_p]:.4f}"], textposition='top center',
+                textfont=dict(size=9, color='#16a085'),
+                name='Pmax PLS', yaxis='y2', showlegend=False))
 
-    # Curva KPLS
     if modelo_sel in ('kpls', 'ambos') and _KPLS_OK:
         V_kpls = voltaje_kpls(i_range, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
         if V_kpls is not None:
             P_kpls = V_kpls * i_range
-            fig_dt.add_trace(go.Scatter(
-                x=i_range, y=V_kpls, mode='lines',
+            fig_dt.add_trace(go.Scatter(x=i_range, y=V_kpls, mode='lines',
                 line=dict(color='#e67e22', width=2.5),
-                name='KPLS (kernel)', yaxis='y1'
-            ))
-            fig_dt.add_trace(go.Scatter(
-                x=i_range, y=P_kpls, mode='lines',
+                name='KPLS (kernel)', yaxis='y1'))
+            fig_dt.add_trace(go.Scatter(x=i_range, y=P_kpls, mode='lines',
                 line=dict(color='#d35400', width=2, dash='dash'),
-                name='P KPLS', yaxis='y2'
-            ))
-            # Punto de máxima potencia KPLS
+                name='P KPLS', yaxis='y2'))
             idx_k = int(np.argmax(P_kpls))
             fig_dt.add_trace(go.Scatter(
-                x=[i_range[idx_k]], y=[P_kpls[idx_k]],
-                mode='markers+text',
+                x=[i_range[idx_k]], y=[P_kpls[idx_k]], mode='markers+text',
                 marker=dict(color='#d35400', size=12, symbol='star'),
-                text=[f"Pmax={P_kpls[idx_k]:.4f}"],
-                textposition='top center',
-                textfont=dict(size=10, color='#d35400'),
-                name='Pmax KPLS', yaxis='y2', showlegend=False
-            ))
+                text=[f"Pmax={P_kpls[idx_k]:.4f}"], textposition='top center',
+                textfont=dict(size=9, color='#d35400'),
+                name='Pmax KPLS', yaxis='y2', showlegend=False))
 
-    metricas_out = html.P("Ajusta los sliders para ver la curva del modelo DT.",
-                          style={'color': '#888', 'fontFamily': 'Arial'})
+    metricas_out = html.P("Selecciona un experimento y carga las condiciones.",
+                          style={'color': '#888', 'fontFamily': 'Arial',
+                                 'fontSize': '12px'})
     kpis_out = []
-    fig_v = fig_empty
-    fig_p = fig_empty
-    tabla_out = html.P("Sin mediciones aún.", style={'color': '#aaa', 'fontFamily': 'Arial'})
+    fig_v    = fig_empty
+    fig_p    = fig_empty
 
-    # ── Si hay simulacion activa, cargar mediciones reales ─────────────────────
+    # ── Helpers de métricas ────────────────────────────────────────────────────
+    def color_m(val, bueno, malo, inv=False):
+        if val is None: return '#aaa'
+        if not inv:
+            return '#27ae60' if val >= bueno else (
+                '#e67e22' if val >= malo else '#e74c3c')
+        return '#27ae60' if val <= bueno else (
+            '#e67e22' if val <= malo else '#e74c3c')
+
+    card_met = {'display': 'inline-block', 'textAlign': 'center',
+                'width': '30%', 'padding': '8px',
+                'backgroundColor': 'white', 'borderRadius': '8px',
+                'boxShadow': '0 1px 4px #ccc', 'marginRight': '4px'}
+
+    def met_card(titulo, val_n, val_p, val_k, bueno, malo, inv=False):
+        return html.Div([
+            html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '11px',
+                                    'marginBottom': '4px', 'color': '#555'}),
+            html.Div("Nernst", style={'fontSize': '10px', 'color': '#e74c3c'}),
+            html.Div(f"{val_n:.4f}" if val_n is not None else "—",
+                     style={'fontSize': '14px', 'fontWeight': 'bold',
+                            'color': color_m(val_n, bueno, malo, inv)}),
+            html.Div("PLS", style={'fontSize': '10px', 'color': '#2980b9',
+                                   'marginTop': '3px'}),
+            html.Div(f"{val_p:.4f}" if val_p is not None else "—",
+                     style={'fontSize': '14px', 'fontWeight': 'bold',
+                            'color': color_m(val_p, bueno, malo, inv)}),
+            html.Div("KPLS", style={'fontSize': '10px', 'color': '#e67e22',
+                                    'marginTop': '3px'}),
+            html.Div(f"{val_k:.4f}" if val_k is not None else "—",
+                     style={'fontSize': '14px', 'fontWeight': 'bold',
+                            'color': color_m(val_k, bueno, malo, inv)}),
+        ], style=card_met)
+
+    def calcular_metricas_bloque(df_puntos, T_m, H2a_m, H2Oa_m, CO2a_m,
+                                  O2c_m, CO2c_m, N2c_m, r1_m,
+                                  exp_id_label, sufijo=""):
+        """Calcula y retorna el panel de métricas para un DataFrame de puntos."""
+        if len(df_puntos) < 2:
+            return html.P(
+                f"Exp {exp_id_label}: acumulando puntos... ({len(df_puntos)}/2 mín.)",
+                style={'color': '#e67e22', 'fontFamily': 'Arial',
+                       'fontSize': '12px'})
+
+        V_pred_n = voltaje_modelo(
+            df_puntos['i_densidad'].values,
+            T_m, H2a_m, H2Oa_m, CO2a_m, O2c_m, CO2c_m, r1_m)
+        r2_n, mae_n, nrmse_n = metricas(df_puntos['voltaje'].values, V_pred_n)
+
+        r2_p = mae_p = nrmse_p = None
+        r2_k = mae_k = nrmse_k = None
+        if _PLS_OK:
+            V_pred_p = voltaje_pls(df_puntos['i_densidad'].values,
+                                   T_m, H2a_m, H2Oa_m, CO2a_m,
+                                   O2c_m, CO2c_m, N2c_m, r1_m)
+            if V_pred_p is not None:
+                r2_p, mae_p, nrmse_p = metricas(
+                    df_puntos['voltaje'].values, V_pred_p)
+        if _KPLS_OK:
+            V_pred_k = voltaje_kpls(df_puntos['i_densidad'].values,
+                                    T_m, H2a_m, H2Oa_m, CO2a_m,
+                                    O2c_m, CO2c_m, N2c_m, r1_m)
+            if V_pred_k is not None:
+                r2_k, mae_k, nrmse_k = metricas(
+                    df_puntos['voltaje'].values, V_pred_k)
+
+        n = len(df_puntos)
+        return html.Div([
+            html.Div(
+                f"Exp {exp_id_label}{sufijo} — {n} punto{'s' if n != 1 else ''}",
+                style={'fontWeight': 'bold', 'fontSize': '11px',
+                       'color': '#2c3e50', 'marginBottom': '8px',
+                       'fontFamily': 'Arial'}),
+            html.Div([
+                met_card("R²",    r2_n, r2_p, r2_k, 0.95, 0.85),
+                met_card("MAE",   mae_n, mae_p, mae_k, 0.02, 0.05, inv=True),
+                met_card("NRMSE", nrmse_n, nrmse_p, nrmse_k,
+                         0.05, 0.10, inv=True),
+            ], style={'display': 'flex', 'flexWrap': 'nowrap'})
+        ])
+
+    # ── Leer condiciones del experimento de referencia (dropdown) ─────────────
+    T_m = T; H2a_m = H2a; H2Oa_m = H2Oa; CO2a_m = CO2a
+    O2c_m = O2c; CO2c_m = CO2c; N2c_m = N2c; r1_m = r1
+
+    exp_id_ref = exp_id_sim if exp_id_sim is not None else exp_id_dropdown
+    if exp_id_ref is not None:
+        fila_ref = exp_summary[exp_summary['id_experimento'] == exp_id_ref]
+        if not fila_ref.empty:
+            row_ref = fila_ref.iloc[0]
+            T_m     = float(row_ref['T'])
+            H2a_m   = float(row_ref['H2a'])
+            H2Oa_m  = float(row_ref['H2Oa'])
+            CO2a_m  = float(row_ref['CO2a'])
+            O2c_m   = float(row_ref['O2c'])
+            CO2c_m  = float(row_ref['CO2c'])
+            N2c_m   = float(row_ref['N2c'])
+            r1_m    = float(row_ref['r_1'])
+
+    # ── CASO 1: Simulación activa → reproducción directa del exp original ────
     if exp_id_sim is not None:
         try:
             conn = psycopg2.connect(**DB_CONFIG)
-            df_m = pd.read_sql("""
-                SELECT id_medicion, i_densidad, voltaje, eta, timestamp_medicion
-                FROM mediciones
-                WHERE id_experimento = %s
-                ORDER BY timestamp_medicion ASC
+            df_todos = pd.read_sql("""
+                SELECT i_densidad, voltaje, eta
+                FROM mediciones WHERE id_experimento = %s
+                ORDER BY i_densidad ASC
             """, conn, params=(exp_id_sim,))
             conn.close()
 
+            total = len(df_todos)
+
+            # n_intervals como índice: liberar de a 1 punto por tick
+            # Empezar desde 1, llegar hasta total
+            n_mostrar = min(max(n or 1, 1), total)
+            df_m = df_todos.iloc[:n_mostrar].copy()
+
             if not df_m.empty:
-                # Superponer datos reales en curva DT
                 fig_dt.add_trace(go.Scatter(
                     x=df_m['i_densidad'], y=df_m['voltaje'],
-                    mode='markers', name='Datos simulados',
-                    marker=dict(color='#27ae60', size=8), yaxis='y1'
-                ))
+                    mode='markers', name='Datos reales (Milewski)',
+                    marker=dict(color='#27ae60', size=8, symbol='circle'),
+                    yaxis='y1'))
 
-                # Metricas si hay suficientes puntos y hay variedad de corrientes
-                es_modo_continuo = df_m['i_densidad'].nunique() <= 2
-                if es_modo_continuo:
-                    metricas_out = html.Div([
-                        html.P(
-                            "⚠ Métricas no disponibles en modo continuo.",
-                            style={'color': '#e67e22', 'fontFamily': 'Arial',
-                                   'fontWeight': 'bold', 'marginBottom': '4px'}
-                        ),
-                        html.P(
-                            "Use modo Curva (21 puntos i) para evaluar el modelo con R², MAE y NRMSE.",
-                            style={'color': '#7f8c8d', 'fontFamily': 'Arial', 'fontSize': '12px'}
-                        ),
-                    ], style={'padding': '12px', 'backgroundColor': '#fef9e7',
-                              'borderRadius': '8px', 'border': '1px solid #f39c12'})
+                en_curso = n_mostrar < total
+                sufijo   = (f" · en curso 🔄 ({n_mostrar}/{total})"
+                            if en_curso
+                            else f" · completo ✓ ({total} pts)")
 
-                if len(df_m) >= 3 and not es_modo_continuo:
-                    V_pred_n = voltaje_modelo(
-                        df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, r1
-                    )
-                    r2_n, mae_n, nrmse_n = metricas(df_m['voltaje'].values, V_pred_n)
+                metricas_out = calcular_metricas_bloque(
+                    df_m[['i_densidad', 'voltaje']],
+                    T_m, H2a_m, H2Oa_m, CO2a_m,
+                    O2c_m, CO2c_m, N2c_m, r1_m,
+                    exp_id_sim, sufijo=sufijo)
 
-                    # Métricas PLS
-                    r2_p = mae_p = nrmse_p = None
-                    if _PLS_OK:
-                        V_pred_p = voltaje_pls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
-                        if V_pred_p is not None:
-                            r2_p, mae_p, nrmse_p = metricas(df_m['voltaje'].values, V_pred_p)
-
-                    # Métricas KPLS
-                    r2_k = mae_k = nrmse_k = None
-                    if _KPLS_OK:
-                        V_pred_k = voltaje_kpls(df_m['i_densidad'].values, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
-                        if V_pred_k is not None:
-                            r2_k, mae_k, nrmse_k = metricas(df_m['voltaje'].values, V_pred_k)
-
-                    def color_m(val, bueno, malo, inv=False):
-                        if val is None: return '#aaa'
-                        if not inv:
-                            return '#27ae60' if val >= bueno else ('#e67e22' if val >= malo else '#e74c3c')
-                        return '#27ae60' if val <= bueno else ('#e67e22' if val <= malo else '#e74c3c')
-
-                    card = {'display': 'inline-block', 'textAlign': 'center', 'width': '14%',
-                            'padding': '10px', 'backgroundColor': 'white', 'borderRadius': '8px',
-                            'boxShadow': '0 1px 4px #ccc', 'marginRight': '8px'}
-
-                    def met_card(titulo, val_n, val_p, val_k, bueno, malo, inv=False):
-                        return html.Div([
-                            html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '11px',
-                                                    'marginBottom': '6px', 'color': '#555'}),
-                            html.Div("Nernst", style={'fontSize': '10px', 'color': '#e74c3c'}),
-                            html.Div(f"{val_n:.4f}" if val_n is not None else "—",
-                                     style={'fontSize': '16px', 'fontWeight': 'bold',
-                                            'color': color_m(val_n, bueno, malo, inv)}),
-                            html.Div("PLS", style={'fontSize': '10px', 'color': '#2980b9',
-                                                   'marginTop': '4px'}),
-                            html.Div(f"{val_p:.4f}" if val_p is not None else "—",
-                                     style={'fontSize': '16px', 'fontWeight': 'bold',
-                                            'color': color_m(val_p, bueno, malo, inv)}),
-                            html.Div("KPLS", style={'fontSize': '10px', 'color': '#e67e22',
-                                                    'marginTop': '4px'}),
-                            html.Div(f"{val_k:.4f}" if val_k is not None else "—",
-                                     style={'fontSize': '16px', 'fontWeight': 'bold',
-                                            'color': color_m(val_k, bueno, malo, inv)}),
-                        ], style=card)
-
-                    metricas_out = html.Div([
-                        html.H4(f"Evaluacion del modelo — Exp {exp_id_sim}",
-                                style={'color': '#2c3e50', 'marginBottom': '8px',
-                                       'fontFamily': 'Arial'}),
-                        html.Div([
-                            met_card("R²",    r2_n,    r2_p,    r2_k,    0.95, 0.85),
-                            met_card("MAE[V]",mae_n,   mae_p,   mae_k,   0.02, 0.05, inv=True),
-                            met_card("NRMSE", nrmse_n, nrmse_p, nrmse_k, 0.05, 0.10, inv=True),
-                        ], style={'display': 'flex', 'flexWrap': 'nowrap'})
-                    ])
-
-                # KPIs ultima medicion
-                ultima = df_m.iloc[-1]
-                V_u = float(ultima['voltaje'])
-                i_u = float(ultima['i_densidad'])
-                P_u = V_u * i_u
-                eta_u = float(ultima['eta']) if ultima['eta'] else 0.0
+                ultima  = df_m.iloc[-1]
+                V_u     = float(ultima['voltaje'])
+                i_u     = float(ultima['i_densidad'])
+                P_u     = V_u * i_u
+                eta_u   = float(ultima['eta']) if ultima['eta'] else 0.0
                 kpis_out = [
-                    kpi("Voltaje",     f"{V_u:.4f}", "V",      '#27ae60'),
-                    kpi("Corriente",   f"{i_u:.4f}", "A/cm²",  '#2980b9'),
-                    kpi("Potencia",    f"{P_u:.4f}", "W/cm²",  '#8e44ad'),
-                    kpi("Eficiencia η",f"{eta_u:.3f}", "—",    '#16a085'),
+                    kpi("Voltaje",      f"{V_u:.4f}", "V",     '#27ae60'),
+                    kpi("Corriente",    f"{i_u:.4f}", "A/cm²", '#2980b9'),
+                    kpi("Potencia",     f"{P_u:.4f}", "W/cm²", '#8e44ad'),
+                    kpi("Eficiencia η", f"{eta_u:.3f}", "—",   '#16a085'),
                 ]
 
-                # Grafico voltaje vs tiempo
+                df_idx = df_m.reset_index(drop=True)
                 fig_v = go.Figure()
                 fig_v.add_trace(go.Scatter(
-                    x=df_m['timestamp_medicion'], y=df_m['voltaje'],
+                    x=df_idx.index + 1, y=df_idx['voltaje'],
                     mode='lines+markers',
                     line=dict(color='#27ae60', width=2),
-                    marker=dict(size=5), name='Voltaje'
-                ))
+                    marker=dict(size=5), name='Voltaje'))
                 fig_v.update_layout(
-                    title='Voltaje E [V]',
-                    xaxis_title='Tiempo', yaxis_title='E [V]',
-                    template='plotly_white', font=dict(family='Arial'),
-                    margin=dict(t=35, b=40, l=50, r=20)
-                )
+                    title='Voltaje E [V]', xaxis_title='Punto N°',
+                    yaxis_title='E [V]', template='plotly_white',
+                    font=dict(family='Arial'),
+                    margin=dict(t=30, b=40, l=50, r=20))
 
-                # Grafico potencia vs tiempo
-                df_m['potencia'] = df_m['voltaje'] * df_m['i_densidad']
+                df_idx['potencia'] = df_idx['voltaje'] * df_idx['i_densidad']
                 fig_p = go.Figure()
                 fig_p.add_trace(go.Scatter(
-                    x=df_m['timestamp_medicion'], y=df_m['potencia'],
+                    x=df_idx.index + 1, y=df_idx['potencia'],
                     mode='lines+markers',
                     line=dict(color='#8e44ad', width=2),
-                    marker=dict(size=5), name='Potencia'
-                ))
+                    marker=dict(size=5), name='Potencia'))
                 fig_p.update_layout(
-                    title='Potencia P [W/cm²]',
-                    xaxis_title='Tiempo', yaxis_title='P [W/cm²]',
-                    template='plotly_white', font=dict(family='Arial'),
-                    margin=dict(t=35, b=40, l=50, r=20)
-                )
-
-                # Tabla ultimas 10 mediciones
-                df_tabla = df_m.tail(10).copy()
-                df_tabla['potencia'] = (df_tabla['voltaje'] * df_tabla['i_densidad']).round(5)
-                df_tabla['voltaje']    = df_tabla['voltaje'].round(4)
-                df_tabla['i_densidad'] = df_tabla['i_densidad'].round(4)
-                df_tabla['eta']        = df_tabla['eta'].round(4)
-                df_tabla['timestamp_medicion'] = df_tabla['timestamp_medicion'].astype(str).str[:19]
-                df_tabla = df_tabla[['timestamp_medicion','i_densidad','voltaje','potencia','eta']]
-                df_tabla.columns = ['Timestamp','i [A/cm²]','V [V]','P [W/cm²]','η']
-
-                tabla_out = dash_table.DataTable(
-                    data=df_tabla.to_dict('records'),
-                    columns=[{'name': c, 'id': c} for c in df_tabla.columns],
-                    style_table={'overflowX': 'auto'},
-                    style_header={'backgroundColor': '#2c3e50', 'color': 'white',
-                                  'fontWeight': 'bold', 'fontFamily': 'Arial',
-                                  'fontSize': '12px'},
-                    style_cell={'fontFamily': 'Arial', 'fontSize': '12px',
-                                'padding': '6px', 'textAlign': 'center'},
-                    style_data_conditional=[{
-                        'if': {'row_index': 'odd'}, 'backgroundColor': '#f8f9fa'
-                    }]
-                )
+                    title='Potencia P [W/cm²]', xaxis_title='Punto N°',
+                    yaxis_title='P [W/cm²]', template='plotly_white',
+                    font=dict(family='Arial'),
+                    margin=dict(t=30, b=40, l=50, r=20))
 
         except Exception:
             pass
+
+    # ── CASO 2: Sin simulación → métricas del experimento completo ────────────
+    else:
+        # Prioridad: último exp reproducido > experimento del dropdown
+        exp_id_metricas = last_exp_id if last_exp_id else exp_id_dropdown
+        sufijo_label = (" · resultado final ✓"
+                        if last_exp_id else " · referencia completa")
+
+        if exp_id_metricas is not None:
+            try:
+                # Actualizar condiciones si el exp de métricas difiere del dropdown
+                if exp_id_metricas != exp_id_dropdown:
+                    fila_last = exp_summary[
+                        exp_summary['id_experimento'] == exp_id_metricas]
+                    if not fila_last.empty:
+                        row_last = fila_last.iloc[0]
+                        T_m    = float(row_last['T'])
+                        H2a_m  = float(row_last['H2a'])
+                        H2Oa_m = float(row_last['H2Oa'])
+                        CO2a_m = float(row_last['CO2a'])
+                        O2c_m  = float(row_last['O2c'])
+                        CO2c_m = float(row_last['CO2c'])
+                        N2c_m  = float(row_last['N2c'])
+                        r1_m   = float(row_last['r_1'])
+
+                conn_m = psycopg2.connect(**DB_CONFIG)
+                df_real = pd.read_sql("""
+                    SELECT i_densidad, voltaje
+                    FROM mediciones
+                    WHERE id_experimento = %s
+                    ORDER BY i_densidad ASC
+                """, conn_m, params=(exp_id_metricas,))
+                conn_m.close()
+
+                if not df_real.empty:
+                    fig_dt.add_trace(go.Scatter(
+                        x=df_real['i_densidad'], y=df_real['voltaje'],
+                        mode='markers', name='Datos reales (Milewski)',
+                        marker=dict(color='#27ae60', size=8, symbol='circle'),
+                        yaxis='y1'))
+
+                    metricas_out = calcular_metricas_bloque(
+                        df_real,
+                        T_m, H2a_m, H2Oa_m, CO2a_m,
+                        O2c_m, CO2c_m, N2c_m, r1_m,
+                        exp_id_metricas,
+                        sufijo=sufijo_label
+                    )
+            except Exception as e:
+                metricas_out = html.P(
+                    f"Error: {e}",
+                    style={'color': '#e74c3c', 'fontFamily': 'Arial',
+                           'fontSize': '12px'})
 
     fig_dt.update_layout(
         title=f'Digital Twin — T={T}°C',
@@ -1133,259 +1205,92 @@ def actualizar_dt(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, exp_id_sim, modelo_
         yaxis2=dict(title='Potencia P [W/cm²]', overlaying='y',
                     side='right', showgrid=False),
         hovermode='x unified', template='plotly_white',
-        font=dict(family='Arial'),
-        legend=dict(orientation='h', y=-0.22)
-    )
+        font=dict(family='Arial'), legend=dict(orientation='h', y=-0.25))
 
-    return fig_dt, metricas_out, kpis_out, fig_v, fig_p, tabla_out
+    # ── Optimizador integrado (lee los sliders actuales) ──────────────────────
+    J_MIN, J_MAX  = 0.005, 0.200
+    j_arr         = np.linspace(J_MIN, J_MAX, 200)
+    fig_opt       = go.Figure()
+    filas_opt     = []
+    COLORES       = {'Nernst': '#e74c3c', 'PLS': '#2980b9', 'KPLS': '#27ae60'}
 
+    def p_nernst(j):
+        V = voltaje_modelo(j, T, H2a, H2Oa, CO2a, O2c, CO2c, r1, N2c=N2c)
+        return max(float(V), 0.0) * float(j)
 
-# ── Callback: cargar experimento cercano ───────────────────────────────────────
-@app.callback(
-    Output('dt-T',    'value'),
-    Output('dt-H2a',  'value'),
-    Output('dt-H2Oa', 'value'),
-    Output('dt-CO2a', 'value'),
-    Output('dt-O2c',  'value'),
-    Output('dt-CO2c', 'value'),
-    Output('dt-N2c',  'value'),
-    Output('dt-r1',   'value'),
-    Output('btn-feedback', 'children'),
-    Input('btn-cargar-exp', 'n_clicks'),
-    State('dt-T',    'value'),
-    State('dt-H2a',  'value'),
-    State('dt-H2Oa', 'value'),
-    State('dt-CO2a', 'value'),
-    State('dt-O2c',  'value'),
-    State('dt-CO2c', 'value'),
-    State('dt-N2c',  'value'),
-    State('dt-r1',   'value'),
-    prevent_initial_call=True
-)
-def cargar_experimento_cercano(n_clicks, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1):
-    tol_T = 13
-    cands = exp_summary[abs(exp_summary['T'] - T) <= tol_T].copy()
-    if len(cands) == 0:
-        return T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, 'Sin experimentos cercanos'
-    ref = np.array([H2a, H2Oa, CO2a, O2c, CO2c, N2c])
-    cands['dist'] = cands[['H2a', 'H2Oa', 'CO2a', 'O2c', 'CO2c', 'N2c']].apply(
-        lambda row: np.linalg.norm(row.values - ref), axis=1
-    )
-    mejor = cands.sort_values('dist').iloc[0]
-    eid   = int(mejor['id_experimento'])
-    return (
-        int(mejor['T']),
-        round(float(mejor['H2a']),  3),
-        round(float(mejor['H2Oa']), 3),
-        round(float(mejor['CO2a']), 3),
-        round(float(mejor['O2c']),  3),
-        round(float(mejor['CO2c']), 3),
-        round(float(mejor['N2c']),  3),
-        round(float(mejor['r_1']),  3),
-        f'Cargado: Exp {eid} (T={int(mejor["T"])}°C)'
-    )
+    def p_pls(j):
+        V = float(voltaje_pls(np.array([float(j)]),
+                              T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)[0])
+        return max(V, 0.0) * float(j)
 
+    def p_kpls(j):
+        V = float(voltaje_kpls(np.array([float(j)]),
+                               T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)[0])
+        return max(V, 0.0) * float(j)
 
-# ── Helpers y Callbacks Tab 5: Monitoreo Live ──────────────────────────────────
-def get_experimentos_udec():
-    conn = psycopg2.connect(**DB_CONFIG)
-    df_exp = pd.read_sql("""
-        SELECT e.id_experimento, e.t, e.h2a, e.co2a, e.o2c, e.co2c,
-               e.created_at,
-               COUNT(m.id_medicion) AS n_mediciones
-        FROM experimentos e
-        LEFT JOIN mediciones m USING(id_experimento)
-        WHERE e.fuente = 'udec_lab'
-        GROUP BY e.id_experimento, e.t, e.h2a, e.co2a, e.o2c, e.co2c, e.created_at
-        ORDER BY e.created_at DESC
-        LIMIT 50
-    """, conn)
-    conn.close()
-    return df_exp
+    FN = {'Nernst': p_nernst, 'PLS': p_pls, 'KPLS': p_kpls}
 
-
-def get_mediciones_live(id_exp: int):
-    conn = psycopg2.connect(**DB_CONFIG)
-    df_m = pd.read_sql("""
-        SELECT id_medicion, i_densidad, voltaje, eta, timestamp_medicion
-        FROM mediciones
-        WHERE id_experimento = %s
-        ORDER BY timestamp_medicion ASC
-    """, conn, params=(id_exp,))
-    conn.close()
-    return df_m
-
-
-@app.callback(
-    Output('live-exp-selector', 'options'),
-    Output('live-exp-selector', 'value'),
-    Input('live-interval', 'n_intervals'),
-    State('live-exp-selector', 'value'),
-)
-def actualizar_selector(n, current_val):
-    df_exp = get_experimentos_udec()
-    if df_exp.empty:
-        return [], None
-    options = [
-        {
-            'label': (f"Exp {row.id_experimento} | T={int(row.t)}°C | "
-                      f"H2a={row.h2a:.2f} | {row.n_mediciones} med. | "
-                      f"{str(row.created_at)[:16]}"),
-            'value': int(row.id_experimento)
-        }
-        for row in df_exp.itertuples()
-    ]
-    ids_disponibles = [o['value'] for o in options]
-    if options:
-        options[0]['label'] = "▶ " + options[0]['label']
-    val = current_val if current_val in ids_disponibles else options[0]['value']
-    return options, val
-
-
-@app.callback(
-    Output('live-voltaje',  'figure'),
-    Output('live-potencia', 'figure'),
-    Output('live-polar',    'figure'),
-    Output('live-kpis',     'children'),
-    Output('live-exp-info', 'children'),
-    Output('live-status',   'children'),
-    Input('live-interval',      'n_intervals'),
-    Input('live-exp-selector',  'value'),
-)
-def actualizar_live(n, id_exp):
-    card_base = {
-        'display': 'inline-block', 'textAlign': 'center',
-        'width': '22%', 'padding': '14px',
-        'backgroundColor': 'white', 'borderRadius': '10px',
-        'boxShadow': '0 2px 6px rgba(0,0,0,0.08)',
-        'marginRight': '12px', 'verticalAlign': 'top'
-    }
-    fig_empty = go.Figure()
-    fig_empty.update_layout(template='plotly_white', font=dict(family='Arial'),
-                            annotations=[dict(text='Sin datos', showarrow=False,
-                                             font=dict(size=14, color='#aaa'),
-                                             xref='paper', yref='paper', x=0.5, y=0.5)])
-    if id_exp is None:
-        return fig_empty, fig_empty, fig_empty, html.P("Sin experimento seleccionado."), "", "Esperando datos..."
-
-    df_m = get_mediciones_live(id_exp)
-    if df_m.empty:
-        return fig_empty, fig_empty, fig_empty, \
-               html.P("Sin mediciones aún.", style={'color': '#888'}), \
-               "", "Sin mediciones"
-
-    ultima = df_m.iloc[-1]
-    n_med  = len(df_m)
-    ts_str = str(ultima['timestamp_medicion'])[:19] if ultima['timestamp_medicion'] else '—'
-
-    def kpi_card(titulo, valor, unidad, color='#2c3e50'):
-        return html.Div([
-            html.Div(titulo, style={'fontWeight': 'bold', 'fontSize': '12px',
-                                    'color': '#7f8c8d', 'marginBottom': '6px'}),
-            html.Div(valor,  style={'fontSize': '26px', 'fontWeight': 'bold', 'color': color}),
-            html.Div(unidad, style={'fontSize': '11px', 'color': '#aaa', 'marginTop': '2px'}),
-        ], style=card_base)
-
-    V_last   = float(ultima['voltaje'])
-    i_last   = float(ultima['i_densidad'])
-    P_last   = V_last * i_last
-    eta_last = float(ultima['eta']) if ultima['eta'] else 0.0
-
-    def color_v_relativo(v, i):
-        v_esperado = max(1.05 - 3.5 * i, 0.4)
-        ratio = v / v_esperado if v_esperado > 0 else 1.0
-        if ratio >= 0.97:   return '#27ae60'
-        elif ratio >= 0.90: return '#e67e22'
-        else:               return '#e74c3c'
-
-    kpis = html.Div([
-        kpi_card("Voltaje",            f"{V_last:.4f}", "V",     color_v_relativo(V_last, i_last)),
-        kpi_card("Densidad corriente", f"{i_last:.4f}", "A/cm²", '#2980b9'),
-        kpi_card("Potencia",           f"{P_last:.4f}", "W/cm²", '#8e44ad'),
-        kpi_card("Eficiencia η",  f"{eta_last:.3f}", "—",   '#16a085'),
-    ], style={'display': 'flex', 'flexWrap': 'nowrap', 'gap': '12px', 'alignItems': 'stretch'})
-
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        row_exp = pd.read_sql(
-            "SELECT t, h2a, co2a, o2c, co2c, n2c FROM experimentos WHERE id_experimento=%s",
-            conn, params=(id_exp,)
-        ).iloc[0]
-        conn.close()
-        info = html.Div([
-            html.Div(f"T = {int(row_exp.t)} °C",   style={'marginBottom': '3px'}),
-            html.Div(f"H2a = {row_exp.h2a:.3f}",   style={'marginBottom': '3px'}),
-            html.Div(f"CO2a = {row_exp.co2a:.3f}",  style={'marginBottom': '3px'}),
-            html.Div(f"O2c = {row_exp.o2c:.3f}",   style={'marginBottom': '3px'}),
-            html.Div(f"CO2c = {row_exp.co2c:.3f}",  style={'marginBottom': '3px'}),
-            html.Div(f"Mediciones: {n_med}",
-                     style={'marginTop': '8px', 'fontWeight': 'bold', 'color': '#2980b9'}),
-            html.Div(f"Última: {ts_str}",
-                     style={'fontSize': '11px', 'color': '#aaa', 'marginTop': '3px'}),
-        ])
-    except Exception:
-        info = html.P("—")
-
-    status = f"Actualizando... {n_med} mediciones recibidas"
-
-    fig_v = go.Figure()
-    fig_v.add_trace(go.Scatter(x=df_m['timestamp_medicion'], y=df_m['voltaje'],
-                               mode='lines+markers', line=dict(color='#2980b9', width=2),
-                               marker=dict(size=6), name='Voltaje'))
-    fig_v.update_layout(title='Voltaje E [V] — tiempo real',
-                        xaxis_title='Tiempo', yaxis_title='E [V]',
-                        template='plotly_white', font=dict(family='Arial'),
-                        margin=dict(t=40, b=40, l=50, r=20))
-
-    df_m['potencia'] = df_m['voltaje'] * df_m['i_densidad']
-    fig_p = go.Figure()
-    fig_p.add_trace(go.Scatter(x=df_m['timestamp_medicion'], y=df_m['potencia'],
-                               mode='lines+markers', line=dict(color='#8e44ad', width=2),
-                               marker=dict(size=6), name='Potencia'))
-    fig_p.update_layout(title='Potencia P [W/cm²] — tiempo real',
-                        xaxis_title='Tiempo', yaxis_title='P [W/cm²]',
-                        template='plotly_white', font=dict(family='Arial'),
-                        margin=dict(t=40, b=40, l=50, r=20))
-
-    fig_polar = go.Figure()
-    fig_polar.add_trace(go.Scatter(x=df_m['i_densidad'], y=df_m['voltaje'],
-                                   mode='lines+markers', line=dict(color='#27ae60', width=2),
-                                   marker=dict(size=7, color='#27ae60'),
-                                   name='Curva experimental'))
-    if n_med >= 3:
+    for nombre in ['Nernst', 'PLS', 'KPLS']:
+        if nombre == 'PLS'  and not _PLS_OK:  continue
+        if nombre == 'KPLS' and not _KPLS_OK: continue
         try:
-            conn2 = psycopg2.connect(**DB_CONFIG)
-            row_e = pd.read_sql(
-                "SELECT t, h2a, h2oa, co2a, o2c, co2c, n2c, h2oc, co, ch4 "
-                "FROM experimentos WHERE id_experimento=%s", conn2, params=(id_exp,)
-            ).iloc[0]
-            pm = pd.read_sql(
-                "SELECT r_1 FROM parametros_modelo WHERE id_experimento=%s LIMIT 1",
-                conn2, params=(id_exp,)
-            )
-            conn2.close()
-            r1_val = float(pm['r_1'].iloc[0]) if not pm.empty and pm['r_1'].iloc[0] is not None else 1.973
-            i_range = np.linspace(0, df_m['i_densidad'].max() * 1.1, 80)
-            V_mod = voltaje_modelo(i_range, float(row_e.t), float(row_e.h2a), float(row_e.h2oa),
-                                   float(row_e.co2a), float(row_e.o2c), float(row_e.co2c), r1_val,
-                                   N2a=float(row_e.co), CO=float(row_e.co), CH4=float(row_e.ch4),
-                                   N2c=float(row_e.n2c), H2Oc=float(row_e.h2oc))
-            fig_polar.add_trace(go.Scatter(x=i_range, y=V_mod, mode='lines',
-                                           line=dict(color='#e74c3c', width=2, dash='dot'),
-                                           name='Modelo DT'))
+            fn    = FN[nombre]
+            color = COLORES[nombre]
+            p_arr = np.array([fn(j) for j in j_arr])
+            res   = _minimize_scalar(lambda j: -fn(j), bounds=(J_MIN, J_MAX),
+                                     method='bounded', options={'xatol': 1e-5})
+            j_opt     = float(res.x)
+            pmax      = round(fn(j_opt), 5)
+            V_opt     = round(pmax / j_opt if j_opt > 0 else 0.0, 4)
+            en_limite = abs(j_opt - J_MAX) < 1e-4
+
+            fig_opt.add_trace(go.Scatter(
+                x=j_arr, y=p_arr, mode='lines',
+                name=f'p(j) {nombre}', line=dict(color=color, width=2)))
+            fig_opt.add_trace(go.Scatter(
+                x=[j_opt], y=[pmax], mode='markers',
+                name=f'j* {nombre}',
+                marker=dict(color=color, size=11, symbol='star',
+                            line=dict(color='white', width=1))))
+            filas_opt.append({
+                'Modelo': nombre,
+                'j* (A/cm²)': round(j_opt, 5),
+                'V* (V)': V_opt,
+                'Pmax (W/cm²)': pmax,
+                'En límite': '⚠' if en_limite else '—',
+            })
         except Exception:
             pass
 
-    fig_polar.update_layout(
-        title=f'Curva de Polarización acumulada — Exp {id_exp}',
-        xaxis_title='Densidad de corriente i [A/cm²]',
-        yaxis_title='Voltaje E [V]',
+    fig_opt.update_layout(
+        title=f'p(j) — T={T}°C',
+        xaxis_title='j [A/cm²]', yaxis_title='p [W/cm²]',
         template='plotly_white', font=dict(family='Arial'),
-        hovermode='x unified', margin=dict(t=40, b=50, l=50, r=20),
-        legend=dict(orientation='h', y=-0.2)
-    )
+        hovermode='x unified', legend=dict(orientation='h', y=-0.25),
+        margin=dict(t=40, b=60, l=50, r=20))
 
-    return fig_v, fig_p, fig_polar, kpis, info, status
+    cols_opt = ['Modelo', 'j* (A/cm²)', 'V* (V)', 'Pmax (W/cm²)', 'En límite']
+    tabla_opt = dash_table.DataTable(
+        columns=[{'name': c, 'id': c} for c in cols_opt],
+        data=filas_opt,
+        style_table={'fontFamily': 'Arial'},
+        style_header={'backgroundColor': '#2c3e50', 'color': 'white',
+                      'fontWeight': 'bold', 'textAlign': 'center',
+                      'fontSize': '12px'},
+        style_cell={'textAlign': 'center', 'padding': '8px',
+                    'fontFamily': 'Arial', 'fontSize': '12px'},
+        style_data_conditional=[{
+            'if': {'filter_query': '{En límite} = "⚠"'},
+            'backgroundColor': '#fef9e7', 'color': '#d35400'
+        }]
+    )
+    nota_opt = html.P(
+        "⚠ j*=0.200: Pmax real podría estar fuera del rango validado.",
+        style={'fontFamily': 'Arial', 'fontSize': '11px',
+               'color': '#e67e22', 'marginTop': '6px'})
+
+    return (fig_dt, metricas_out, kpis_out, fig_v, fig_p,
+            html.Div([tabla_opt, nota_opt]), fig_opt)
 
 
 if __name__ == '__main__':
