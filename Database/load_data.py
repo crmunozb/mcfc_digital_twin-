@@ -100,19 +100,21 @@ for conds, grupo in grupos:
     ))
 
     mediciones_data = [
-        (
-            id_exp,
-            float(row['i, A/cm²']),
-            float(row['Experiment']),
-            float(row['eta'])
-        )
-        for _, row in grupo.iterrows()
+    (
+        id_exp,
+        float(row['i, A/cm²']),
+        float(row['Experiment']),
+        float(row['eta']),
+        float(row['E_max'])
+    )
+    for _, row in grupo.iterrows()
+    
     ]
 
     execute_values(cur, '''
-        INSERT INTO mediciones (id_experimento, i_densidad, voltaje, eta)
-        VALUES %s
-    ''', mediciones_data)
+    INSERT INTO mediciones (id_experimento, i_densidad, voltaje, eta, e_max)
+    VALUES %s
+''', mediciones_data)
 
     n_med += len(mediciones_data)
 
