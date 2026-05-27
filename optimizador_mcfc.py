@@ -327,22 +327,107 @@ def optimizar_robusto(mu, sigma, j_arr, umbral=0.95):
 
 
 # ── Programa principal ─────────────────────────────────────────────────────────
-def run(args):
+def ingresar_condiciones_libre():
+    """
+    Modo libre: el usuario ingresa condiciones operacionales directamente.
+    Muestra valores por defecto basados en el experimento más frecuente
+    del dataset (T=650°C, condiciones típicas de Milewski).
+    """
+    DEFAULTS = {
+        'T':    (650,   [550, 575, 600, 625, 650], '°C'),
+        'H2a':  (2.21,  (0.22, 4.41),              'mol relativo'),
+        'H2Oa': (0.41,  (0.05, 1.29),              'mol relativo'),
+        'CO2a': (0.55,  (0.06, 1.10),              'mol relativo'),
+        'O2c':  (1.30,  (0.13, 5.25),              'mol relativo'),
+        'CO2c': (2.15,  (0.27, 14.24),             'mol relativo'),
+        'N2c':  (4.87,  (0.49, 29.11),             'mol relativo'),
+        'r_1':  (1.973, (1.80, 3.00),              'Ω·cm²'),
+    }
+
+    print("=" * 65)
+    print("  Optimizador Operacional MCFC — Modo Libre")
+    print("  Ingresa condiciones operacionales (Enter = valor por defecto)")
+    print("=" * 65)
+    print()
+
+    condiciones = {}
+
+    for var, (default, rango, unidad) in DEFAULTS.items():
+        if var == 'T':
+            opciones = '/'.join(str(t) for t in rango)
+            prompt = f"  {var} [{opciones}] {unidad} (default {default}): "
+        else:
+            prompt = (f"  {var} [{rango[0]:.2f} – {rango[1]:.2f}] "
+                      f"{unidad} (default {default}): ")
+
+        while True:
+            try:
+                entrada = input(prompt).strip()
+                if entrada == '':
+                    valor = float(default)
+                else:
+                    valor = float(entrada)
+
+                # Validar rango
+                if var == 'T':
+                    if int(valor) not in rango:
+                        print(f"    ⚠ T debe ser uno de {rango}. Intenta de nuevo.")
+                        continue
+                else:
+                    if not (rango[0] * 0.5 <= valor <= rango[1] * 1.5):
+                        print(f"    ⚠ Valor fuera del rango extendido "
+                              f"[{rango[0]*0.5:.2f}, {rango[1]*1.5:.2f}]. "
+                              f"Continúa bajo tu responsabilidad.")
+                condiciones[var] = valor
+                break
+            except ValueError:
+                print("    ⚠ Ingresa un número válido.")
+            except KeyboardInterrupt:
+                print("\n  Cancelado.")
+                sys.exit(0)
+
+    print()
+    print("  Condiciones ingresadas:")
+    for k, v in condiciones.items():
+        print(f"    {k:<6} = {v}")
+    print()
+
+    return condiciones
+
+
+def run(args, condiciones_libre=None):
+    """
+    Ejecuta el optimizador.
+    Si condiciones_libre es None, carga condiciones desde la BD (args.exp_id).
+    Si condiciones_libre es un dict, usa esas condiciones directamente.
+    """
     print("=" * 65)
     print("  Optimizador Operacional MCFC — Digital Twin UdeC")
     print("=" * 65)
-    print(f"  Experimento : {args.exp_id}")
-    print(f"  Umbral      : {args.umbral * 100:.0f}% del óptimo")
-    print(f"  Rango j     : [{J_MIN:.3f}, {J_MAX:.3f}] A/cm²")
+    print(f"  Umbral  : {args.umbral * 100:.0f}% del óptimo")
+    print(f"  Rango j : [{J_MIN:.3f}, {J_MAX:.3f}] A/cm²")
     print()
 
-    # Cargar condiciones desde la BD
-    condiciones, df_med = cargar_experimento(args.exp_id)
-    print("Condiciones operacionales del experimento:")
-    for k, v in condiciones.items():
-        print(f"  {k:<6} = {v:.4f}")
-    print(f"  Mediciones reales disponibles: {len(df_med)}")
-    print()
+    # ── Obtener condiciones ────────────────────────────────────────────────────
+    df_med = None
+    if condiciones_libre is not None:
+        # Modo libre: condiciones ingresadas por el usuario
+        condiciones = condiciones_libre
+        print("  Modo: LIBRE (condiciones manuales)")
+        print("  Condiciones operacionales:")
+        for k, v in condiciones.items():
+            print(f"    {k:<6} = {v:.4f}")
+        print()
+    else:
+        # Modo BD: condiciones desde el experimento seleccionado
+        print(f"  Modo: BD — Experimento {args.exp_id}")
+        condiciones, df_med = cargar_experimento(args.exp_id)
+        print("  Condiciones operacionales del experimento:")
+        for k, v in condiciones.items():
+            print(f"    {k:<6} = {v:.4f}")
+        if df_med is not None:
+            print(f"  Mediciones reales disponibles: {len(df_med)}")
+        print()
 
     # Grilla de j para optimización
     j_arr = np.linspace(J_MIN, J_MAX, N_PUNTOS)
@@ -423,11 +508,12 @@ def run(args):
             }
 
             fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-            fig.suptitle(
-                f"Optimizador Operacional MCFC — Exp {args.exp_id} "
-                f"(T={condiciones['T']:.0f}°C)",
-                fontsize=13, fontweight='bold'
+            titulo_grafico = (
+                f"Optimizador Operacional MCFC — "
+                f"{'Modo Libre' if condiciones_libre else f'Exp {args.exp_id}'} "
+                f"(T={condiciones['T']:.0f}°C)"
             )
+            fig.suptitle(titulo_grafico, fontsize=13, fontweight='bold')
 
             ax_V, ax_P = axes
 
@@ -496,10 +582,16 @@ def run(args):
             plt.tight_layout()
 
             if args.guardar_grafico:
-                nombre_archivo = (
-                    f"optimizador_exp{args.exp_id}_"
-                    f"umbral{int(args.umbral*100)}.png"
-                )
+                if condiciones_libre:
+                    nombre_archivo = (
+                        f"optimizador_libre_T{int(condiciones['T'])}_"
+                        f"umbral{int(args.umbral*100)}.png"
+                    )
+                else:
+                    nombre_archivo = (
+                        f"optimizador_exp{args.exp_id}_"
+                        f"umbral{int(args.umbral*100)}.png"
+                    )
                 plt.savefig(nombre_archivo, dpi=150, bbox_inches='tight')
                 print(f"\nGráfico guardado en: {nombre_archivo}")
 
@@ -515,32 +607,72 @@ def run(args):
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Optimizador Operacional MCFC — Digital Twin UdeC"
+        description="Optimizador Operacional MCFC — Digital Twin UdeC",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modos de uso:
+  Modo BD (experimento existente):
+    python3 optimizador_mcfc.py --exp_id 9
+    python3 optimizador_mcfc.py            (lista interactiva)
+
+  Modo libre (condiciones manuales):
+    python3 optimizador_mcfc.py --libre
+    python3 optimizador_mcfc.py --T 600 --H2a 3.0 --H2Oa 0.5 \\
+        --CO2a 0.6 --O2c 2.0 --CO2c 3.0 --N2c 6.0 --r1 2.38
+
+  Listar experimentos disponibles:
+    python3 optimizador_mcfc.py --listar
+        """
     )
+
+    # ── Modo ──────────────────────────────────────────────────────────────────
     parser.add_argument(
         "--exp_id", type=int, default=None,
-        help="ID del experimento en PostgreSQL (si no se indica, "
-             "se muestra lista interactiva)"
+        help="ID del experimento en PostgreSQL"
     )
     parser.add_argument(
-        "--umbral", type=float, default=0.95,
-        help="Fracción del Pmax para definir región óptima (default: 0.95)"
-    )
-    parser.add_argument(
-        "--guardar_grafico", action="store_true",
-        help="Guardar gráfico como PNG en el directorio actual"
-    )
-    parser.add_argument(
-        "--mostrar_grafico", action="store_true",
-        help="Mostrar gráfico interactivo"
+        "--libre", action="store_true",
+        help="Modo libre: ingresar condiciones manualmente"
     )
     parser.add_argument(
         "--listar", action="store_true",
         help="Listar experimentos disponibles y salir"
     )
+
+    # ── Condiciones para modo libre directo (sin preguntas) ───────────────────
+    parser.add_argument("--T",    type=float, default=None,
+                        help="Temperatura [°C]: 550/575/600/625/650")
+    parser.add_argument("--H2a",  type=float, default=None,
+                        help="H2 ánodo (default 2.21)")
+    parser.add_argument("--H2Oa", type=float, default=None,
+                        help="H2O ánodo (default 0.41)")
+    parser.add_argument("--CO2a", type=float, default=None,
+                        help="CO2 ánodo (default 0.55)")
+    parser.add_argument("--O2c",  type=float, default=None,
+                        help="O2 cátodo (default 1.30)")
+    parser.add_argument("--CO2c", type=float, default=None,
+                        help="CO2 cátodo (default 2.15)")
+    parser.add_argument("--N2c",  type=float, default=None,
+                        help="N2 cátodo (default 4.87)")
+    parser.add_argument("--r1",   type=float, default=None,
+                        help="Resistencia óhmica r1 [Ω·cm²] (default 1.973)")
+
+    # ── Opciones generales ────────────────────────────────────────────────────
+    parser.add_argument(
+        "--umbral", type=float, default=0.95,
+        help="Fracción del Pmax para región óptima (default: 0.95)"
+    )
+    parser.add_argument(
+        "--guardar_grafico", action="store_true",
+        help="Guardar gráfico como PNG"
+    )
+    parser.add_argument(
+        "--mostrar_grafico", action="store_true",
+        help="Mostrar gráfico interactivo"
+    )
     args = parser.parse_args()
 
-    # Modo --listar: solo muestra la tabla y sale
+    # ── Modo --listar ─────────────────────────────────────────────────────────
     if args.listar:
         df = listar_experimentos()
         print("=" * 65)
@@ -561,8 +693,33 @@ if __name__ == "__main__":
         print(f"  Total: {len(df)} experimentos")
         sys.exit(0)
 
-    # Si no se pasó --exp_id, modo interactivo
-    if args.exp_id is None:
-        args.exp_id = seleccionar_experimento_interactivo()
+    # ── Detectar si se pasaron condiciones directas por argumento ─────────────
+    condiciones_args = {
+        'T': args.T, 'H2a': args.H2a, 'H2Oa': args.H2Oa,
+        'CO2a': args.CO2a, 'O2c': args.O2c, 'CO2c': args.CO2c,
+        'N2c': args.N2c, 'r_1': args.r1
+    }
+    tiene_condiciones_directas = any(v is not None for v in condiciones_args.values())
 
-    run(args)
+    if tiene_condiciones_directas:
+        # Rellenar con defaults los que no se pasaron
+        DEFAULTS_VAL = {
+            'T': 650, 'H2a': 2.21, 'H2Oa': 0.41, 'CO2a': 0.55,
+            'O2c': 1.30, 'CO2c': 2.15, 'N2c': 4.87, 'r_1': 1.973
+        }
+        condiciones_libre = {
+            k: (v if v is not None else DEFAULTS_VAL[k])
+            for k, v in condiciones_args.items()
+        }
+        run(args, condiciones_libre=condiciones_libre)
+
+    elif args.libre:
+        # Modo libre interactivo: preguntas una por una
+        condiciones_libre = ingresar_condiciones_libre()
+        run(args, condiciones_libre=condiciones_libre)
+
+    else:
+        # Modo BD: experimento desde PostgreSQL
+        if args.exp_id is None:
+            args.exp_id = seleccionar_experimento_interactivo()
+        run(args, condiciones_libre=None)
