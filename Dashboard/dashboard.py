@@ -225,6 +225,115 @@ PLOT_LAYOUT = dict(
 # ══════════════════════════════════════════════════════════════════════════════
 # APP
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PANEL MODELOS — fichas simples
+# ══════════════════════════════════════════════════════════════════════════════
+MODELOS_INFO = [
+    {
+        'nombre':  'Nernst (Semi-empírico)',
+        'tipo':    'Referencia física',
+        'color':   '#6b7585',
+        'desc':    'Modelo termodinámico basado en la ecuación de Nernst con correcciones de pérdidas óhmicas y cinéticas. No requiere entrenamiento.',
+        'r2':      '~0.970',
+        'mae':     '~0.028 V',
+        'nrmse':   '~0.046',
+        'dataset': 'Fórmula analítica',
+    },
+    {
+        'nombre':  'PLS',
+        'tipo':    'Regresión lineal de componentes',
+        'color':   '#4a7eb5',
+        'desc':    'Partial Least Squares. Proyecta las variables en componentes latentes que maximizan la covarianza con el voltaje.',
+        'r2':      '0.9694',
+        'mae':     '0.0246 V',
+        'nrmse':   '0.0348',
+        'dataset': 'Balanceado (Warsaw + sintéticos)',
+    },
+    {
+        'nombre':  'KPLS',
+        'tipo':    'Regresión kernel no lineal',
+        'color':   '#b8922a',
+        'desc':    'Kernel PLS con función RBF. Captura relaciones no lineales entre variables y voltaje mediante transformación en espacio de características.',
+        'r2':      '0.9829',
+        'mae':     '0.0181 V',
+        'nrmse':   '0.0260',
+        'dataset': 'Balanceado (Warsaw + sintéticos)',
+    },
+    {
+        'nombre':  'GPR',
+        'tipo':    'Proceso gaussiano',
+        'color':   '#6aa3c8',
+        'desc':    'Gaussian Process Regression. Modelo bayesiano no paramétrico que además de predecir el voltaje, entrega una banda de incertidumbre ±2σ.',
+        'r2':      '0.9968',
+        'mae':     '0.0074 V',
+        'nrmse':   '0.0113',
+        'dataset': 'Balanceado (Warsaw + sintéticos)',
+    },
+    {
+        'nombre':  'GPR Residual',
+        'tipo':    'Híbrido físico + GPR',
+        'color':   '#5a9e6f',
+        'desc':    'Contribución original: combina la base física de Nernst con un GPR que aprende el error sistemático residual. Mejor desempeño global.',
+        'r2':      '0.9981',
+        'mae':     '0.0056 V',
+        'nrmse':   '0.0086',
+        'dataset': 'Balanceado (Warsaw + sintéticos)',
+    },
+]
+
+def build_panel_modelos():
+    cards = []
+    for m in MODELOS_INFO:
+        cards.append(html.Div([
+            html.Div([
+                html.Div([
+                    html.Span('●', style={'color': m['color'], 'marginRight':'8px',
+                                          'fontSize':'12px'}),
+                    html.Span(m['nombre'], style=mono(13, C['text'], fontWeight='500')),
+                ]),
+                html.Div(m['tipo'], style=mono(10, C['muted'], marginTop='2px')),
+            ], style={'marginBottom':'8px'}),
+
+            html.Div(m['desc'], style={**mono(10, C['muted']), 'lineHeight':'1.5',
+                                        'marginBottom':'10px'}),
+
+            html.Div([
+                html.Div([
+                    html.Div('R²', style=mono(9, C['dim'], textTransform='uppercase',
+                                              letterSpacing='0.06em')),
+                    html.Div(m['r2'], style=mono(13, m['color'], fontWeight='500')),
+                ], style={'textAlign':'center','flex':'1'}),
+                html.Div([
+                    html.Div('MAE', style=mono(9, C['dim'], textTransform='uppercase',
+                                               letterSpacing='0.06em')),
+                    html.Div(m['mae'], style=mono(11, C['text'])),
+                ], style={'textAlign':'center','flex':'1'}),
+                html.Div([
+                    html.Div('NRMSE', style=mono(9, C['dim'], textTransform='uppercase',
+                                                 letterSpacing='0.06em')),
+                    html.Div(m['nrmse'], style=mono(11, C['text'])),
+                ], style={'textAlign':'center','flex':'1'}),
+            ], style={'display':'flex','gap':'4px',
+                      'backgroundColor':C['surface'],
+                      'borderRadius':'4px','padding':'8px',
+                      'marginBottom':'6px'}),
+
+            html.Div([
+                html.Span('Dataset: ', style=mono(9, C['dim'])),
+                html.Span(m['dataset'], style=mono(9, C['muted'])),
+            ]),
+
+        ], style={**panel_style(),
+                  'borderLeft': f"2px solid {m['color']}",
+                  'marginBottom':'8px'}))
+
+    return html.Div([
+        section_title('⊟', 'Modelos implementados'),
+        html.Div(cards, style={'overflowY':'auto', 'maxHeight':'600px',
+                               'paddingRight':'4px'}),
+    ])
+
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.title = "MCFC Digital Twin — Sistema de Análisis Operacional"
 
@@ -388,10 +497,10 @@ app.layout = html.Div([
         ], style={'display':'flex','alignItems':'center'}),
 
         html.Div([
-            html.Span("MONITOREO",    className='nav-item'),
-            html.Span("OPTIMIZACIÓN", className='nav-item active'),
-            html.Span("HISTORIAL",    className='nav-item'),
-            html.Span("MODELOS",      className='nav-item'),
+            html.Button("MONITOREO",    id='tab-monitoreo',    n_clicks=0, className='nav-item'),
+            html.Button("OPTIMIZACIÓN", id='tab-optimizacion', n_clicks=0, className='nav-item active'),
+            html.Button("HISTORIAL",    id='tab-historial',    n_clicks=0, className='nav-item'),
+            html.Button("MODELOS",      id='tab-modelos',      n_clicks=0, className='nav-item'),
         ], style={'display':'flex','gap':'4px'}),
 
     ], style={'backgroundColor': C['panel'],
@@ -489,44 +598,71 @@ app.layout = html.Div([
 
         ], style={'width':'250px','flexShrink':'0'}),
 
-        # ── PANEL DERECHO ──────────────────────────────────────────────────────
+        # ── PANEL DERECHO — contenido dinámico según tab ────────────────────
         html.Div([
 
-            # KPIs
-            html.Div(id='kpi-row', children=[
-                kpi_card("Esperando cálculo", "—", "Presione calcular"),
-            ], style={'display':'grid',
-                      'gridTemplateColumns':'repeat(4,1fr)',
-                      'gap':'8px','marginBottom':'10px'}),
+            # ── TAB: OPTIMIZACIÓN ──────────────────────────────────────────────
+            html.Div(id='panel-optimizacion', children=[
 
-            # Curva de polarización
-            html.Div([
+                html.Div(id='kpi-row', children=[
+                    kpi_card("Esperando cálculo", "—", "Presione calcular"),
+                ], style={'display':'grid',
+                          'gridTemplateColumns':'repeat(4,1fr)',
+                          'gap':'8px','marginBottom':'10px'}),
+
                 html.Div([
                     section_title('◈', 'Curva de polarización E(j) y densidad de potencia'),
-                ], style={'marginBottom':'0'}),
-                dcc.Graph(id='fig-curvas', style={'height':'260px'},
-                          config={'displayModeBar':False}),
-            ], style=panel_style()),
+                    dcc.Graph(id='fig-curvas', style={'height':'260px'},
+                              config={'displayModeBar':False}),
+                ], style=panel_style()),
 
-            # Fila inferior
-            html.Div([
-
-                # Tabla de modelos
                 html.Div([
-                    section_title('⊞', 'Comparación de modelos'),
-                    html.Div(id='tabla-industrial'),
-                    html.Div(id='opt-box'),
-                ], style={**panel_style(), 'flex':'1','marginBottom':'0',
-                           'marginRight':'10px'}),
+                    html.Div([
+                        section_title('⊞', 'Comparación de modelos'),
+                        html.Div(id='tabla-industrial'),
+                        html.Div(id='opt-box'),
+                    ], style={**panel_style(), 'flex':'1','marginBottom':'0',
+                               'marginRight':'10px'}),
+                    html.Div([
+                        section_title('◉', 'Relevancia ARD — GPR Residual'),
+                        html.Div(id='ard-panel', children=[]),
+                    ], style={**panel_style(), 'width':'240px','flexShrink':'0',
+                               'marginBottom':'0'}),
+                ], style={'display':'flex','gap':'0','alignItems':'flex-start'}),
 
-                # ARD (se llena al iniciar la app via callback de inicio)
+            ]),
+
+            # ── TAB: HISTORIAL ─────────────────────────────────────────────────
+            html.Div(id='panel-historial', style={'display':'none'}, children=[
                 html.Div([
-                    section_title('◉', 'Relevancia ARD — GPR Residual'),
-                    html.Div(id='ard-panel', children=[]),
-                ], style={**panel_style(), 'width':'240px','flexShrink':'0',
-                           'marginBottom':'0'}),
+                    section_title('◷', 'Historial de cálculos — sesión actual'),
+                    html.Div(id='tabla-historial',
+                             children=[html.Div("Sin cálculos aún. Presione Calcular en Optimización.",
+                                                style=mono(11, C['muted'], textAlign='center',
+                                                           padding='30px 0'))]),
+                ], style=panel_style()),
+            ]),
 
-            ], style={'display':'flex','gap':'0','alignItems':'flex-start'}),
+            # ── TAB: MODELOS ───────────────────────────────────────────────────
+            html.Div(id='panel-modelos', style={'display':'none'}, children=[
+                build_panel_modelos(),
+            ]),
+
+            # ── TAB: MONITOREO ─────────────────────────────────────────────────
+            html.Div(id='panel-monitoreo', style={'display':'none'}, children=[
+                html.Div([
+                    section_title('◈', 'Tendencias de variables operacionales'),
+                    html.Div(id='monitor-info',
+                             style=mono(10, C['muted'], marginBottom='8px')),
+                    dcc.Graph(id='fig-monitoreo', style={'height':'340px'},
+                              config={'displayModeBar':False}),
+                ], style=panel_style()),
+            ]),
+
+            # Stores
+            dcc.Store(id='store-tab',        data='optimizacion'),
+            dcc.Store(id='store-historial',  data=[]),
+            dcc.Store(id='store-best-model', data='—'),
 
         ], style={'flex':'1','minWidth':'0','paddingLeft':'10px',
                   'display':'flex','flexDirection':'column','gap':'0'}),
@@ -753,7 +889,8 @@ def actualizar_temperatura_y_bd(
     Output('kpi-row',          'children'),
     Output('tabla-industrial', 'children'),
     Output('opt-box',          'children'),
-    Output('status-calcular',  'children'),
+    Output('status-calcular',    'children'),
+    Output('store-best-model',   'data'),
     Input('btn-calcular', 'n_clicks'),
     State('store-T',    'data'),
     State('sl-H2a',     'value'),
@@ -947,8 +1084,225 @@ def calcular(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
               'marginTop': '10px'})
 
     status = f"✓ T={T}°C · {len(filas)} modelos calculados · j*={best_info.get('j',0):.3f} A/cm²"
+    modelo_ganador = best_info.get('model', '—')
 
-    return fig, kpis, tabla, opt_box, status
+    return fig, kpis, tabla, opt_box, status, modelo_ganador
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CALLBACKS DE TABS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.callback(
+    Output('store-tab',         'data'),
+    Output('tab-monitoreo',     'className'),
+    Output('tab-optimizacion',  'className'),
+    Output('tab-historial',     'className'),
+    Output('tab-modelos',       'className'),
+    Output('panel-optimizacion','style'),
+    Output('panel-historial',   'style'),
+    Output('panel-modelos',     'style'),
+    Output('panel-monitoreo',   'style'),
+    Input('tab-monitoreo',      'n_clicks'),
+    Input('tab-optimizacion',   'n_clicks'),
+    Input('tab-historial',      'n_clicks'),
+    Input('tab-modelos',        'n_clicks'),
+    State('store-tab',          'data'),
+    prevent_initial_call=True,
+)
+def cambiar_tab(n_mon, n_opt, n_his, n_mod, current):
+    triggered = ctx.triggered_id
+    tab_map = {
+        'tab-monitoreo':    'monitoreo',
+        'tab-optimizacion': 'optimizacion',
+        'tab-historial':    'historial',
+        'tab-modelos':      'modelos',
+    }
+    tab = tab_map.get(triggered, current or 'optimizacion')
+
+    def cls(t): return 'nav-item active' if tab == t else 'nav-item'
+    def vis(t): return {} if tab == t else {'display': 'none'}
+
+    return (tab,
+            cls('monitoreo'), cls('optimizacion'),
+            cls('historial'), cls('modelos'),
+            vis('optimizacion'), vis('historial'),
+            vis('modelos'),      vis('monitoreo'))
+
+
+# Guardar en historial tras cada cálculo
+@app.callback(
+    Output('store-historial',  'data'),
+    Output('tabla-historial',  'children'),
+    Input('status-calcular',   'children'),
+    State('store-historial',   'data'),
+    State('store-best-model',  'data'),
+    State('store-T',           'data'),
+    State('sl-H2a',            'value'),
+    State('sl-H2Oa',           'value'),
+    State('sl-CO2a',           'value'),
+    State('sl-O2c',            'value'),
+    State('sl-CO2c',           'value'),
+    State('sl-N2c',            'value'),
+    State('sl-r1',             'value'),
+    prevent_initial_call=True,
+)
+def actualizar_historial(status, historial, modelo_ganador, T,
+                         H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1):
+    import datetime
+    if not status or '✓' not in status:
+        raise dash.exceptions.PreventUpdate
+
+    historial = historial or []
+
+    # Extraer j* del status string
+    j_star = '—'
+    for p in status.split('·'):
+        if 'j*=' in p:
+            j_star = p.strip().replace('j*=', '').replace(' A/cm²', '').strip()
+
+    entrada = {
+        'hora':   datetime.datetime.now().strftime('%H:%M:%S'),
+        'T':      f"{T}°C",
+        'H2a':    f"{H2a:.2f}",
+        'H2Oa':   f"{H2Oa:.2f}",
+        'CO2a':   f"{CO2a:.2f}",
+        'O2c':    f"{O2c:.2f}",
+        'CO2c':   f"{CO2c:.2f}",
+        'N2c':    f"{N2c:.2f}",
+        'r1':     f"{r1:.2f}",
+        'modelo': modelo_ganador or '—',
+        'j_star': j_star,
+    }
+    historial = [entrada] + historial[:19]  # máx 20 entradas
+
+    # Construir tabla visual — legible
+    COLS = '80px 60px 55px 55px 55px 55px 55px 55px 55px 160px 90px'
+    headers = ['Hora', 'T', 'H₂a', 'H₂Oa', 'CO₂a', 'O₂c', 'CO₂c', 'N₂c', 'r₁', 'Mejor modelo', 'j* (A/cm²)']
+
+    hdr = html.Div([
+        html.Div(h, style={
+            'fontFamily': "'JetBrains Mono', monospace",
+            'fontSize': '10px',
+            'color': C['text'],
+            'fontWeight': '500',
+            'letterSpacing': '0.05em',
+            'textTransform': 'uppercase',
+            'padding': '8px 6px',
+        }) for h in headers
+    ], style={
+        'display': 'grid',
+        'gridTemplateColumns': COLS,
+        'borderBottom': f"1px solid {C['border']}",
+        'backgroundColor': C['surface'],
+        'borderRadius': '6px 6px 0 0',
+        'marginBottom': '2px',
+    })
+
+    rows = []
+    for i, e in enumerate(historial):
+        is_new = (i == 0)
+        bg     = C['accent_bg'] if is_new else ('rgba(255,255,255,0.02)' if i % 2 == 0 else 'transparent')
+        border = f"1px solid {C['accent2']}" if is_new else f"0.5px solid {C['border2']}"
+        txt    = C['text'] if is_new else '#b0bac8'
+
+        def cell(val, col=None):
+            return html.Div(val, style={
+                'fontFamily': "'JetBrains Mono', monospace",
+                'fontSize': '12px',
+                'color': col or txt,
+                'padding': '9px 6px',
+                'lineHeight': '1.2',
+            })
+
+        row = html.Div([
+            cell(e['hora'],   C['muted'] if not is_new else C['accent']),
+            cell(e['T'],      C['teal']),
+            cell(e['H2a']),
+            cell(e['H2Oa']),
+            cell(e['CO2a']),
+            cell(e['O2c']),
+            cell(e['CO2c']),
+            cell(e['N2c']),
+            cell(e['r1']),
+            cell(e['modelo'], C['ok']),
+            cell(e['j_star'], C['warn']),
+        ], style={
+            'display': 'grid',
+            'gridTemplateColumns': COLS,
+            'backgroundColor': bg,
+            'border': border,
+            'borderRadius': '4px',
+            'marginBottom': '3px',
+        })
+        rows.append(row)
+
+    # Contador de entradas
+    contador = html.Div(
+        f"{len(historial)} cálculo{'s' if len(historial)!=1 else ''} registrado{'s' if len(historial)!=1 else ''} en esta sesión",
+        style={**mono(10, C['muted']), 'marginBottom': '10px', 'textAlign': 'right'}
+    )
+
+    tabla = html.Div([contador, hdr] + rows)
+    return historial, tabla
+
+
+# Monitoreo — actualizar gráfico de tendencias cuando cambian sliders
+@app.callback(
+    Output('fig-monitoreo',  'figure'),
+    Output('monitor-info',   'children'),
+    Input('sl-H2a',    'value'),
+    Input('sl-H2Oa',   'value'),
+    Input('sl-CO2a',   'value'),
+    Input('sl-O2c',    'value'),
+    Input('sl-CO2c',   'value'),
+    Input('sl-N2c',    'value'),
+    Input('sl-r1',     'value'),
+    Input('store-T',   'data'),
+    State('store-tab', 'data'),
+)
+def actualizar_monitoreo(H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, T, tab):
+    args = (T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
+    j_arr = np.linspace(J_MIN, J_MAX, 200)
+
+    fig = go.Figure()
+    layout = {**PLOT_LAYOUT}
+    layout['xaxis'] = {**layout['xaxis'],
+                       'title': dict(text='Densidad de corriente j [A/cm²]',
+                                     font=dict(size=10, color=C['muted']))}
+    layout['yaxis'] = {**layout['yaxis'],
+                       'title': dict(text='Voltaje E [V]',
+                                     font=dict(size=10, color=C['muted']))}
+
+    # Curva Nernst base (referencia)
+    vn = v_nernst(j_arr, *args)
+    fig.add_trace(go.Scatter(x=j_arr, y=vn, mode='lines', name='Nernst',
+                             line=dict(color=C['muted'], width=1.5, dash='dash')))
+
+    # Sweeps de ±20% sobre CO₂c (variable más relevante por ARD)
+    for factor, lbl, col in [(0.8, 'CO₂c −20%', C['red']),
+                              (1.0, 'CO₂c actual', C['ok']),
+                              (1.2, 'CO₂c +20%', C['teal'])]:
+        co2c_var = np.clip(CO2c * factor, 0.3, 14.0)
+        args_v = (T, H2a, H2Oa, CO2a, O2c, co2c_var, N2c, r1)
+        try:
+            mu, _ = v_gprr(j_arr, *args_v)
+            if mu is not None:
+                fig.add_trace(go.Scatter(x=j_arr, y=mu, mode='lines', name=lbl,
+                                         line=dict(color=col, width=2 if factor==1.0 else 1.2)))
+        except Exception:
+            pass
+
+    # Línea vertical en j actual (midpoint)
+    j_mid = (J_MIN + J_MAX) / 2
+    fig.add_vline(x=j_mid, line_color=C['dim'], line_dash='dot', line_width=1)
+
+    fig.update_layout(**layout)
+
+    info = (f"T = {T}°C  ·  H₂a = {H2a:.2f}  ·  CO₂c = {CO2c:.2f}  ·  "
+            f"r₁ = {r1:.2f} Ω·cm²  ·  Sensibilidad: sweep CO₂c ±20%")
+    return fig, info
 
 
 if __name__ == '__main__':
