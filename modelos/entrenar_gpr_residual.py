@@ -31,6 +31,7 @@ Uso:
 
 import os
 import sys
+import argparse
 import joblib
 import numpy as np
 import pandas as pd
@@ -41,13 +42,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
 
-# Importar modelo de Nernst desde el mismo directorio
+# Importar modelo de Nernst y cargador de datos
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 from modelo_nernst import voltaje_modelo as nernst_voltaje
+from cargar_datos import cargar_dataset, cargar_holdout
 
-DATASET    = os.path.join(BASE_DIR, '..', 'Data', 'Data_original_PGNN.xlsx')
-MODELO_OUT = os.path.join(BASE_DIR, 'gpr_residual.pkl')
+MODELO_BASE = 'gpr_residual'
 
 
 # ── Configuración ──────────────────────────────────────────────────────────────
@@ -106,10 +107,50 @@ def calcular_v_nernst_dataset(df):
     return V_nernst
 
 
-# ── Cargar datos ───────────────────────────────────────────────────────────────
-print("Cargando dataset...")
-df       = pd.read_excel(DATASET)
+# ── Argumento fuente ──────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(description="Entrenamiento GPR Residual para celda MCFC")
+parser.add_argument(
+    '--fuente', nargs='+',
+    default=['warsaw_ut', 'sintetico'],
+    choices=['warsaw_ut', 'sintetico'],
+    help="Fuentes de datos a usar (default: warsaw_ut sintetico)"
+)
+parser.add_argument(
+    '--max_samples', type=int, default=None,
+    help="Límite de muestras por temperatura (recomendado: 400)"
+)
+parser.add_argument(
+    '--holdout', action='store_true',
+    help="Excluir curvas reales de 550-625°C del entrenamiento (evaluación de generalización)"
+)
+args = parser.parse_args()
+# Sufijo según fuente para no sobreescribir modelos
+_sufijo = '_balanceado' if 'sintetico' in args.fuente else '_warsaw'
+if args.holdout:
+    _sufijo = _sufijo + '_holdout'
+MODELO_OUT = os.path.join(BASE_DIR, MODELO_BASE + _sufijo + '.pkl')
+print(f"Fuentes seleccionadas: {args.fuente}")
+if args.max_samples:
+    print(f"Límite de muestras: {args.max_samples} por temperatura")
+
+# ── Cargar datos desde PostgreSQL ─────────────────────────────────────────────
+df       = cargar_dataset(
+    fuentes=args.fuente,
+    holdout_temps=[550, 575, 600, 625] if args.holdout else None
+)
 df_clean = df[FEATURES + [TARGET]].dropna()
+
+# Muestreo balanceado por temperatura si se especifica --max_samples
+if args.max_samples:
+    import numpy as np
+    rng = np.random.default_rng(42)
+    grupos = []
+    for temp in df_clean['T'].unique():
+        sub = df_clean[df_clean['T'] == temp]
+        n   = min(args.max_samples, len(sub))
+        grupos.append(sub.sample(n=n, random_state=42))
+    df_clean = pd.concat(grupos).sample(frac=1, random_state=42).reset_index(drop=True)
+    print(f"Dataset reducido a {len(df_clean)} filas ({args.max_samples} por temperatura)")
 
 X      = df_clean[FEATURES].values
 y_real = df_clean[TARGET].values
@@ -311,9 +352,11 @@ salida = {
     'scaler_e': scaler_e,   # scaler del residuo (no del voltaje)
 
     # Configuración
+    'fuentes':       args.fuente,
     'features':      FEATURES,
     'target':        TARGET,
     'test_size':     TEST_SIZE,
+    'max_samples':   args.max_samples,
     'random_state':  RANDOM_STATE,
     'n_train':       len(X_train),
     'n_test':        len(X_test),

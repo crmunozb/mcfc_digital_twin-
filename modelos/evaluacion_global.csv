@@ -1,0 +1,9 @@
+dataset,modelo,r2_test,mae_test,nrmse_test
+warsaw,PLS,0.947,0.0199,0.0345
+warsaw,KPLS,0.9741,0.0148,0.0241
+warsaw,GPR,0.9959,0.0056,0.0096
+warsaw,GPR_Residual,0.9955,0.0059,0.0101
+balanceado,PLS,0.9694,0.0246,0.0348
+balanceado,KPLS,0.9829,0.0181,0.026
+balanceado,GPR,0.9968,0.0074,0.0113
+balanceado,GPR_Residual,0.9981,0.0056,0.0086
