@@ -28,21 +28,21 @@ C = {
     'bg':       '#1a1d23',
     'surface':  '#20242c',
     'panel':    '#252a33',
-    'border':   '#363c48',
+    'border':   '#3d4455',
     'border2':  '#2c3140',
-    'accent':   '#4a7eb5',
+    'accent':   '#5a8ec8',
     'accent2':  '#3567a0',
     'accent_bg':'#1e2d40',
-    'ok':       '#5a9e6f',
+    'ok':       '#6ab87f',
     'ok_bg':    '#1a2e22',
-    'warn':     '#b8922a',
+    'warn':     '#d4a843',
     'warn_bg':  '#2a2010',
-    'red':      '#b85450',
+    'red':      '#cc6360',
     'red_bg':   '#2a1818',
-    'teal':     '#4a9eb5',
-    'text':     '#d0d6e0',
-    'muted':    '#7a8494',
-    'dim':      '#4a5260',
+    'teal':     '#5ab5cc',
+    'text':     '#e8ecf2',
+    'muted':    '#9ba8bc',
+    'dim':      '#5e6b80',
 }
 
 COLORES_MODELOS = {
@@ -162,41 +162,41 @@ def mono(size=11, color=None, **kw):
     return s
 
 def label_style():
-    return mono(10, C['muted'], letterSpacing='0.08em',
-                textTransform='uppercase', marginBottom='5px')
+    return mono(11, C['muted'], letterSpacing='0.06em',
+                textTransform='uppercase', marginBottom='6px')
 
 def panel_style():
-    return {'backgroundColor': C['panel'], 'border': f"0.5px solid {C['border']}",
-            'borderRadius': '8px', 'padding': '14px', 'marginBottom': '10px'}
+    return {'backgroundColor': C['panel'], 'border': f"1px solid {C['border']}",
+            'borderRadius': '10px', 'padding': '16px', 'marginBottom': '12px'}
 
 def kpi_card(label, value, unit, sub=None, color=None):
     col = color or C['ok']
     return html.Div([
-        html.Div(label, style=mono(9, C['muted'], letterSpacing='0.08em',
-                                   textTransform='uppercase', marginBottom='6px')),
-        html.Div(value, style=mono(22, col, fontWeight='500', lineHeight='1')),
-        html.Div(unit,  style=mono(10, C['muted'], marginTop='3px')),
-        html.Div(sub,   style=mono(10, C['dim'],   marginTop='2px')) if sub else html.Div(),
+        html.Div(label, style=mono(10, C['muted'], letterSpacing='0.06em',
+                                   textTransform='uppercase', marginBottom='8px')),
+        html.Div(value, style=mono(26, col, fontWeight='500', lineHeight='1')),
+        html.Div(unit,  style=mono(11, C['muted'], marginTop='5px')),
+        html.Div(sub,   style=mono(11, C['dim'],   marginTop='3px')) if sub else html.Div(),
     ], style={'backgroundColor': C['surface'],
-              'border': f"0.5px solid {C['border']}",
-              'borderRadius': '6px', 'padding': '12px'})
+              'border': f"1px solid {C['border']}",
+              'borderRadius': '8px', 'padding': '16px'})
 
 def section_title(icon_char, text):
     return html.Div([
-        html.Span(icon_char, style={'marginRight': '6px', 'color': C['muted']}),
-        html.Span(text, style=mono(10, C['muted'], letterSpacing='0.08em',
-                                   textTransform='uppercase')),
-    ], style={'marginBottom': '10px', 'display': 'flex', 'alignItems': 'center'})
+        html.Span(icon_char, style={'marginRight': '7px', 'color': C['accent']}),
+        html.Span(text, style=mono(11, C['text'], letterSpacing='0.06em',
+                                   textTransform='uppercase', fontWeight='500')),
+    ], style={'marginBottom': '12px', 'display': 'flex', 'alignItems': 'center'})
 
 def slider_with_label(label, id, min, max, step, value, unit=''):
     return html.Div([
         html.Div([
-            html.Span(label, style=mono(10, C['muted'])),
+            html.Span(label, style=mono(12, C['muted'], fontWeight='500')),
             html.Span(id={'type': 'sl-display', 'index': id},
-                      style=mono(11, C['teal'], fontWeight='500')),
-            html.Span(f' {unit}', style=mono(10, C['dim'])),
+                      style=mono(13, C['teal'], fontWeight='500')),
+            html.Span(f' {unit}', style=mono(11, C['dim'])),
         ], style={'display': 'flex', 'justifyContent': 'space-between',
-                  'marginBottom': '3px'}),
+                  'marginBottom': '4px'}),
         dcc.Slider(id=id, min=min, max=max, step=step, value=value,
                    marks=None, updatemode='drag',
                    tooltip={'always_visible': False},
@@ -209,16 +209,17 @@ def slider_with_label(label, id, min, max, step, value, unit=''):
 PLOT_LAYOUT = dict(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor=C['surface'],
-    font=dict(family="'JetBrains Mono', monospace", color=C['muted'], size=10),
+    font=dict(family="'JetBrains Mono', monospace", color=C['text'], size=12),
     xaxis=dict(gridcolor=C['border2'], linecolor=C['border'],
                tickcolor=C['border'], zerolinecolor=C['border2'],
-               tickfont=dict(size=9)),
+               tickfont=dict(size=11), title_font=dict(size=12)),
     yaxis=dict(gridcolor=C['border2'], linecolor=C['border'],
                tickcolor=C['border'], zerolinecolor=C['border2'],
-               tickfont=dict(size=9)),
-    legend=dict(bgcolor='rgba(0,0,0,0)', font=dict(size=10),
-                orientation='h', y=-0.3),
-    margin=dict(t=30, b=70, l=50, r=20),
+               tickfont=dict(size=11), title_font=dict(size=12)),
+    legend=dict(bgcolor='rgba(30,35,45,0.9)', font=dict(size=11),
+                orientation='h', y=-0.28,
+                bordercolor=C['border'], borderwidth=1),
+    margin=dict(t=35, b=75, l=55, r=25),
     hovermode='x unified',
 )
 
@@ -369,41 +370,41 @@ app.index_string = '''<!DOCTYPE html>
         }
 
         .temp-btn {
-            flex: 1; padding: 5px 0; font-size: 11px;
-            border: 0.5px solid #363c48; border-radius: 4px;
+            flex: 1; padding: 7px 0; font-size: 12px;
+            border: 1px solid #3d4455; border-radius: 5px;
             text-align: center; cursor: pointer;
-            color: #7a8494; background: #20242c;
+            color: #9ba8bc; background: #20242c;
             font-family: 'JetBrains Mono', monospace;
             transition: all 0.15s;
         }
-        .temp-btn:hover { border-color: #4a7eb5; color: #4a7eb5; }
+        .temp-btn:hover { border-color: #5a8ec8; color: #5ab5cc; }
         .temp-btn.active {
-            background: #1e2d40; color: #d0d6e0;
-            border-color: #4a7eb5; font-weight: 500;
-            border-width: 1px;
+            background: #1e2d40; color: #e8ecf2;
+            border-color: #5a8ec8; font-weight: 500;
         }
 
         .run-btn {
-            width: 100%; padding: 10px; border: 0.5px solid #3567a0;
-            border-radius: 6px; background: #1e2d40; color: #6aa3c8;
-            font-family: 'JetBrains Mono', monospace; font-size: 12px;
-            font-weight: 500; cursor: pointer; letter-spacing: 0.06em;
-            text-transform: uppercase; margin-top: 4px;
+            width: 100%; padding: 12px; border: 1px solid #3567a0;
+            border-radius: 7px; background: #1e2d40; color: #5ab5cc;
+            font-family: 'JetBrains Mono', monospace; font-size: 13px;
+            font-weight: 500; cursor: pointer; letter-spacing: 0.08em;
+            text-transform: uppercase; margin-top: 6px;
             transition: all 0.15s;
         }
-        .run-btn:hover { background: #3567a0; color: #d0d6e0; }
+        .run-btn:hover { background: #3567a0; color: #e8ecf2; border-color: #5a8ec8; }
         .run-btn:active { transform: scale(0.98); }
 
         .nav-item {
-            font-size: 11px; color: #7a8494; cursor: pointer;
-            padding: 4px 10px; border-radius: 4px;
+            font-size: 12px; color: #9ba8bc; cursor: pointer;
+            padding: 6px 14px; border-radius: 5px;
             font-family: 'JetBrains Mono', monospace;
             letter-spacing: 0.04em; transition: all 0.15s;
+            border: 0.5px solid transparent;
         }
-        .nav-item:hover { color: #d0d6e0; }
+        .nav-item:hover { color: #e8ecf2; border-color: #3d4455; }
         .nav-item.active {
-            color: #6aa3c8; background: #1e2d40;
-            border: 0.5px solid #3567a0;
+            color: #5ab5cc; background: #1e2d40;
+            border: 1px solid #3567a0; font-weight: 500;
         }
 
         .status-pulse {
@@ -479,10 +480,10 @@ app.layout = html.Div([
                             'marginRight':'10px','flexShrink':'0'}),
             html.Div([
                 html.Div("MCFC DIGITAL TWIN — SISTEMA DE ANÁLISIS OPERACIONAL",
-                         style=mono(12, C['text'], fontWeight='500',
+                         style=mono(13, C['text'], fontWeight='500',
                                     letterSpacing='0.05em')),
                 html.Div("Universidad de Concepción · Dpto. Ing. Informática · v2.0",
-                         style=mono(10, C['muted'])),
+                         style=mono(11, C['muted'])),
             ]),
             html.Span("● SISTEMA ACTIVO",
                       style=mono(9, C['ok'], letterSpacing='0.05em',
@@ -504,10 +505,11 @@ app.layout = html.Div([
         ], style={'display':'flex','gap':'4px'}),
 
     ], style={'backgroundColor': C['panel'],
-              'border': f"0.5px solid {C['border']}",
-              'borderRadius': '8px', 'padding': '10px 16px',
+              'border': f"1px solid {C['border']}",
+              'borderRadius': '10px', 'padding': '12px 20px',
               'display': 'flex', 'alignItems': 'center',
-              'justifyContent': 'space-between', 'marginBottom': '10px'}),
+              'justifyContent': 'space-between', 'marginBottom': '12px',
+              'flexWrap': 'wrap', 'gap': '8px'}),
 
     # ── MAIN GRID ──────────────────────────────────────────────────────────────
     html.Div([
@@ -525,8 +527,8 @@ app.layout = html.Div([
                         {'label': '  Ingresar condiciones libres',   'value': 'libre'},
                     ],
                     value='bd',
-                    style=mono(10, C['muted']),
-                    labelStyle={'display': 'block', 'marginBottom': '6px',
+                    style=mono(12, C['muted']),
+                    labelStyle={'display': 'block', 'marginBottom': '8px',
                                 'cursor': 'pointer'}),
 
                 html.Div(id='div-bd', children=[
@@ -594,9 +596,9 @@ app.layout = html.Div([
             html.Button('▶  CALCULAR Y OPTIMIZAR', id='btn-calcular', n_clicks=0,
                         className='run-btn'),
             html.Div(id='status-calcular',
-                     style=mono(10, C['dim'], textAlign='center', marginTop='6px')),
+                     style=mono(11, C['muted'], textAlign='center', marginTop='8px')),
 
-        ], style={'width':'250px','flexShrink':'0'}),
+        ], style={'width':'285px','flexShrink':'0'}),
 
         # ── PANEL DERECHO — contenido dinámico según tab ────────────────────
         html.Div([
@@ -626,7 +628,7 @@ app.layout = html.Div([
                     html.Div([
                         section_title('◉', 'Relevancia ARD — GPR Residual'),
                         html.Div(id='ard-panel', children=[]),
-                    ], style={**panel_style(), 'width':'240px','flexShrink':'0',
+                    ], style={**panel_style(), 'width':'270px','flexShrink':'0',
                                'marginBottom':'0'}),
                 ], style={'display':'flex','gap':'0','alignItems':'flex-start'}),
 
@@ -682,63 +684,69 @@ def build_ard_static():
         pct = int(val * 100)
         col = C['ok'] if val > 0.5 else (C['teal'] if val > 0.25 else C['dim'])
         items.append(html.Div([
-            html.Div(var, style=mono(10, C['muted'], width='42px',
+            html.Div(var, style=mono(11, C['muted'], width='48px',
                                      textAlign='right', flexShrink='0')),
             html.Div([
-                html.Div(style={'height':'5px','borderRadius':'3px',
+                html.Div(style={'height':'7px','borderRadius':'4px',
                                 'width':f'{pct}%','backgroundColor':col,
                                 'transition':'width 0.4s ease'}),
             ], style={'flex':'1','backgroundColor':C['surface'],
-                      'borderRadius':'3px','height':'5px'}),
-            html.Div(f'{val:.3f}', style=mono(10, C['text'], width='34px',
-                                               flexShrink='0', textAlign='right')),
-        ], style={'display':'flex','alignItems':'center','gap':'8px',
-                  'marginBottom':'7px'}))
+                      'borderRadius':'4px','height':'7px'}),
+            html.Div(f'{val:.3f}', style=mono(11, C['text'], width='38px',
+                                               flexShrink='0', textAlign='right',
+                                               fontWeight='500')),
+        ], style={'display':'flex','alignItems':'center','gap':'10px',
+                  'marginBottom':'9px'}))
     items.append(html.Div([
-        html.Div(style={'width':'6px','height':'6px','borderRadius':'50%',
+        html.Div(style={'width':'7px','height':'7px','borderRadius':'50%',
                         'backgroundColor':C['ok'],'flexShrink':'0',
                         'marginTop':'2px'}),
         html.Span("Importancia relativa para explicar el error de Nernst",
-                  style={**mono(9, C['dim']), 'lineHeight':'1.4',
+                  style={**mono(10, C['muted']), 'lineHeight':'1.5',
                          'whiteSpace':'normal'}),
-    ], style={'display':'flex','alignItems':'flex-start','gap':'6px',
-              'marginTop':'8px','paddingTop':'8px',
-              'borderTop':f"0.5px solid {C['border2']}"}))
+    ], style={'display':'flex','alignItems':'flex-start','gap':'8px',
+              'marginTop':'12px','paddingTop':'10px',
+              'borderTop':f"1px solid {C['border2']}"}))
     return items
 
 def build_tabla(filas):
     headers = ['Modelo','j* (A/cm²)','V* (V)','P (W/cm²)','Región','P_gar','⚠']
+    COLS = '1.4fr 1fr 0.9fr 0.9fr 1.3fr 1fr 0.4fr'
     rows = []
     for i, f in enumerate(filas):
         is_best = f.get('_best', False)
+        bg = C['ok_bg'] if is_best else ('rgba(255,255,255,0.02)' if i%2==0 else 'transparent')
         row_style = {'display':'grid',
-                     'gridTemplateColumns':'1.4fr 1fr 0.9fr 0.9fr 1.3fr 1fr 0.4fr',
-                     'gap':'4px','padding':'6px 8px',
+                     'gridTemplateColumns': COLS,
+                     'gap':'4px','padding':'9px 10px',
                      'borderBottom':f"0.5px solid {C['border2']}",
-                     'backgroundColor': C['ok_bg'] if is_best else 'transparent',
+                     'backgroundColor': bg,
+                     'borderLeft': f"2px solid {C['ok']}" if is_best else '2px solid transparent',
                      'transition':'background 0.1s'}
         cols_vals = [
             html.Div([
                 html.Span('★ ' if is_best else '', style={'color':C['ok']}),
                 html.Span(f['Modelo']),
-            ], style=mono(10, C['ok'] if is_best else C['text'])),
-            html.Div(f"j*={f['j*']:.3f}", style=mono(10, C['teal'])),
-            html.Div(f"{f['V*']:.4f} V",  style=mono(10, C['text'])),
-            html.Div(f"{f['P']:.4f}",     style=mono(10, C['text'])),
-            html.Div(f['Region'],          style=mono(9,  C['muted'])),
-            html.Div(f['Pgar'],            style=mono(9,  C['dim'])),
-            html.Div(f['warn'],            style=mono(10, C['warn'])),
+            ], style=mono(12, C['ok'] if is_best else C['text'], fontWeight='500' if is_best else 'normal')),
+            html.Div(f"j*={f['j*']:.3f}", style=mono(12, C['teal'])),
+            html.Div(f"{f['V*']:.4f} V",  style=mono(12, C['text'])),
+            html.Div(f"{f['P']:.4f}",     style=mono(12, C['text'])),
+            html.Div(f['Region'],          style=mono(11, C['muted'])),
+            html.Div(f['Pgar'],            style=mono(11, C['muted'])),
+            html.Div(f['warn'],            style=mono(12, C['warn'])),
         ]
         rows.append(html.Div(cols_vals, style=row_style))
 
     header_style = {'display':'grid',
-                    'gridTemplateColumns':'1.4fr 1fr 0.9fr 0.9fr 1.3fr 1fr 0.4fr',
-                    'gap':'4px','padding':'5px 8px',
-                    'borderBottom':f"0.5px solid {C['border']}",
+                    'gridTemplateColumns': COLS,
+                    'gap':'4px','padding':'8px 10px',
+                    'borderBottom':f"1px solid {C['border']}",
+                    'backgroundColor': C['surface'],
+                    'borderRadius':'6px 6px 0 0',
                     'marginBottom':'2px'}
     header = html.Div(
-        [html.Div(h, style=mono(9, C['muted'], letterSpacing='0.05em',
-                                textTransform='uppercase'))
+        [html.Div(h, style=mono(10, C['text'], letterSpacing='0.05em',
+                                textTransform='uppercase', fontWeight='500'))
          for h in headers],
         style=header_style)
 
