@@ -3,3 +3,8 @@ config.py
 __pycache__/
 *.pyc
 modelos/*.pkl
+.venv/
+__pycache__/
+*.pyc
+.env
+config.py

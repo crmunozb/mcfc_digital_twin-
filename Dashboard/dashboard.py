@@ -9,9 +9,15 @@ import numpy as np
 import psycopg2
 import joblib as _joblib
 import os, sys
+import datetime
+from scipy.optimize import minimize_scalar
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from config import DB_CONFIG
+try:
+    from config import DB_CONFIG
+except Exception as e:
+    DB_CONFIG = None
+    print(f"⚠ config.py no disponible ({e}) — BD desactivada para despliegue")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONSTANTES
@@ -23,7 +29,7 @@ J_MIN, J_MAX = 0.005, 0.200
 _DIR = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'modelos'))
 
-# ── Paleta industrial seria — gris acero + azul técnico ──────────────────────
+# ── Paleta industrial — gris acero + azul técnico ──────────────────────
 C = {
     'bg':       '#1a1d23',
     'surface':  '#20242c',
@@ -127,20 +133,28 @@ MODELOS_FN = {
 # DATOS DESDE BD
 # ══════════════════════════════════════════════════════════════════════════════
 def get_experimentos():
-    conn = psycopg2.connect(**DB_CONFIG)
-    df = pd.read_sql('''
-        SELECT e.id_experimento,
-               e.t AS "T", e.h2a AS "H2a", e.h2oa AS "H2Oa",
-               e.co2a AS "CO2a", e.o2c AS "O2c",
-               e.co2c AS "CO2c", e.n2c AS "N2c", p.r_1
-        FROM experimentos e
-        JOIN parametros_modelo p USING(id_experimento)
-        ORDER BY e.id_experimento
-    ''', conn)
-    conn.close()
-    return df
+    """Carga experimentos desde PostgreSQL. Si la BD no está disponible,
+    retorna un DataFrame vacío y el dashboard arranca en modo libre."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        df = pd.read_sql('''
+            SELECT e.id_experimento,
+                   e.t AS "T", e.h2a AS "H2a", e.h2oa AS "H2Oa",
+                   e.co2a AS "CO2a", e.o2c AS "O2c",
+                   e.co2c AS "CO2c", e.n2c AS "N2c", p.r_1
+            FROM experimentos e
+            JOIN parametros_modelo p USING(id_experimento)
+            ORDER BY e.id_experimento
+        ''', conn)
+        conn.close()
+        return df, True
+    except Exception as e:
+        print(f"⚠ BD no disponible ({e}) — iniciando en modo libre")
+        cols = ['id_experimento', 'T', 'H2a', 'H2Oa',
+                'CO2a', 'O2c', 'CO2c', 'N2c', 'r_1']
+        return pd.DataFrame(columns=cols), False
 
-exp_df = get_experimentos()
+exp_df, BD_OK = get_experimentos()
 EXP_OPTS = [
     {'label': f"EXP-{r.id_experimento:03d}  T={int(r.T)}°C  "
               f"H2a={r.H2a:.2f}  r₁={r.r_1:.3f}",
@@ -336,6 +350,7 @@ def build_panel_modelos():
     ])
 
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
+server = app.server  # requerido por Gunicorn/Render/Railway
 app.title = "MCFC Digital Twin — Sistema de Análisis Operacional"
 
 app.index_string = '''<!DOCTYPE html>
@@ -363,7 +378,7 @@ app.index_string = '''<!DOCTYPE html>
             background: #1a1d23; border: 2px solid #4a7eb5;
             width: 13px; height: 13px; margin-top: -5px;
         }
-        .industrial-slider .rc-slider-handle:hover { border-color: '#6aa3c8'; }
+        .industrial-slider .rc-slider-handle:hover { border-color: #6aa3c8; }
         .industrial-slider .rc-slider-handle-dragging {
             border-color: #6aa3c8 !important;
             box-shadow: 0 0 0 3px rgba(74,126,181,0.15) !important;
@@ -482,12 +497,13 @@ app.layout = html.Div([
                 html.Div("MCFC DIGITAL TWIN — SISTEMA DE ANÁLISIS OPERACIONAL",
                          style=mono(13, C['text'], fontWeight='500',
                                     letterSpacing='0.05em')),
-                html.Div("Universidad de Concepción · Dpto. Ing. Informática · v2.0",
+                html.Div("Universidad de Concepción · Dpto. Ing. Informática · v2.2",
                          style=mono(11, C['muted'])),
             ]),
-            html.Span("● SISTEMA ACTIVO",
-                      style=mono(9, C['ok'], letterSpacing='0.05em',
-                                 backgroundColor=C['ok_bg'],
+            html.Span("● SISTEMA ACTIVO" if BD_OK else "● BD OFFLINE",
+                      style=mono(9, C['ok'] if BD_OK else C['red'],
+                                 letterSpacing='0.05em',
+                                 backgroundColor=C['ok_bg'] if BD_OK else C['red_bg'],
                                  padding='3px 8px', borderRadius='4px',
                                  marginLeft='12px')),
             html.Span("◈ MODO SIMULACIÓN",
@@ -523,10 +539,11 @@ app.layout = html.Div([
                 dcc.RadioItems(
                     id='modo',
                     options=[
-                        {'label': '  Cargar desde experimento (BD)', 'value': 'bd'},
+                        {'label': '  Cargar desde experimento (BD)', 'value': 'bd',
+                         'disabled': not BD_OK},
                         {'label': '  Ingresar condiciones libres',   'value': 'libre'},
                     ],
-                    value='bd',
+                    value='bd' if BD_OK else 'libre',
                     style=mono(12, C['muted']),
                     labelStyle={'display': 'block', 'marginBottom': '8px',
                                 'cursor': 'pointer'}),
@@ -637,7 +654,18 @@ app.layout = html.Div([
             # ── TAB: HISTORIAL ─────────────────────────────────────────────────
             html.Div(id='panel-historial', style={'display':'none'}, children=[
                 html.Div([
-                    section_title('◷', 'Historial de cálculos — sesión actual'),
+                    html.Div([
+                        section_title('◷', 'Historial de cálculos — sesión actual'),
+                        html.Button('⬇ EXPORTAR CSV', id='btn-export-csv', n_clicks=0,
+                            style={**mono(10, C['accent'], letterSpacing='0.05em'),
+                                   'padding':'5px 12px',
+                                   'backgroundColor':C['accent_bg'],
+                                   'border':f"0.5px solid {C['accent']}",
+                                   'borderRadius':'4px','cursor':'pointer',
+                                   'textTransform':'uppercase'}),
+                    ], style={'display':'flex','justifyContent':'space-between',
+                              'alignItems':'flex-start'}),
+                    dcc.Download(id='download-historial'),
                     html.Div(id='tabla-historial',
                              children=[html.Div("Sin cálculos aún. Presione Calcular en Optimización.",
                                                 style=mono(11, C['muted'], textAlign='center',
@@ -653,7 +681,24 @@ app.layout = html.Div([
             # ── TAB: MONITOREO ─────────────────────────────────────────────────
             html.Div(id='panel-monitoreo', style={'display':'none'}, children=[
                 html.Div([
-                    section_title('◈', 'Tendencias de variables operacionales'),
+                    html.Div([
+                        section_title('◈', 'Análisis de sensibilidad — variable operacional'),
+                        dcc.Dropdown(
+                            id='monitor-var',
+                            options=[
+                                {'label': 'CO₂c (cátodo)', 'value': 'CO2c'},
+                                {'label': 'Temperatura T', 'value': 'T'},
+                                {'label': 'H₂a (ánodo)',   'value': 'H2a'},
+                                {'label': 'O₂c (cátodo)',  'value': 'O2c'},
+                                {'label': 'r₁ (óhmico)',   'value': 'r1'},
+                            ],
+                            value='CO2c', clearable=False,
+                            style={'width':'220px',
+                                   'fontFamily':"'JetBrains Mono', monospace",
+                                   'fontSize':'10px',
+                                   'backgroundColor': C['surface']}),
+                    ], style={'display':'flex','justifyContent':'space-between',
+                              'alignItems':'flex-start'}),
                     html.Div(id='monitor-info',
                              style=mono(10, C['muted'], marginBottom='8px')),
                     dcc.Graph(id='fig-monitoreo', style={'height':'340px'},
@@ -665,6 +710,7 @@ app.layout = html.Div([
             dcc.Store(id='store-tab',        data='optimizacion'),
             dcc.Store(id='store-historial',  data=[]),
             dcc.Store(id='store-best-model', data='—'),
+            dcc.Store(id='store-opt',        data=None),
 
         ], style={'flex':'1','minWidth':'0','paddingLeft':'10px',
                   'display':'flex','flexDirection':'column','gap':'0'}),
@@ -899,6 +945,7 @@ def actualizar_temperatura_y_bd(
     Output('opt-box',          'children'),
     Output('status-calcular',    'children'),
     Output('store-best-model',   'data'),
+    Output('store-opt',          'data'),
     Input('btn-calcular', 'n_clicks'),
     State('store-T',    'data'),
     State('sl-H2a',     'value'),
@@ -956,13 +1003,34 @@ def calcular(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
                 hovertemplate=f'<b>{nombre}</b><br>j=%{{x:.3f}} A/cm²'
                               f'<br>V=%{{y:.4f}} V<extra></extra>'))
 
-            # Optimización
+            # Optimización: argmax sobre grilla + refinamiento continuo (scipy)
             p_arr  = mu * j_arr
             idx_s  = int(np.argmax(p_arr))
             j_star = float(j_arr[idx_s])
             p_star = float(p_arr[idx_s])
             v_star = float(mu[idx_s])
-            en_lim = abs(j_star - J_MAX) < 1e-4
+
+            def _mu_at(jj, _fn=fn, _args=args):
+                out = _fn(np.array([jj], dtype=float), *_args)
+                m = out[0] if isinstance(out, tuple) else out
+                return float(np.atleast_1d(m)[0])
+
+            try:
+                lo = float(j_arr[max(idx_s - 1, 0)])
+                hi = float(j_arr[min(idx_s + 1, len(j_arr) - 1)])
+                if hi > lo:
+                    res = minimize_scalar(
+                        lambda jj: -_mu_at(jj) * jj,
+                        bounds=(lo, hi), method='bounded',
+                        options={'xatol': 1e-5})
+                    if res.success and -res.fun >= p_star:
+                        j_star = float(res.x)
+                        p_star = float(-res.fun)
+                        v_star = _mu_at(j_star)
+            except Exception:
+                pass  # si falla el refinamiento, se conserva el óptimo de grilla
+
+            en_lim = abs(j_star - J_MAX) < 1e-3
 
             mask_r = p_arr >= umbral * p_star
             idx_r  = np.where(mask_r)[0]
@@ -977,10 +1045,6 @@ def calcular(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
                 if mask_g.any():
                     p_gar = float(p_low[mask_g].max())
                 sigma_mean = float(sig.mean())
-
-            # Guardar para marcar solo el mejor al final
-            if nombre == 'GPR Residual' or nombre == 'GPR':
-                _jstar_marker = dict(x=j_star, y=v_star, color=color)
 
             filas.append({
                 'Modelo': nombre,
@@ -1094,7 +1158,7 @@ def calcular(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
     status = f"✓ T={T}°C · {len(filas)} modelos calculados · j*={best_info.get('j',0):.3f} A/cm²"
     modelo_ganador = best_info.get('model', '—')
 
-    return fig, kpis, tabla, opt_box, status, modelo_ganador
+    return fig, kpis, tabla, opt_box, status, modelo_ganador, best_info or None
 
 
 
@@ -1154,21 +1218,17 @@ def cambiar_tab(n_mon, n_opt, n_his, n_mod, current):
     State('sl-CO2c',           'value'),
     State('sl-N2c',            'value'),
     State('sl-r1',             'value'),
+    State('store-opt',         'data'),
     prevent_initial_call=True,
 )
 def actualizar_historial(status, historial, modelo_ganador, T,
-                         H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1):
-    import datetime
+                         H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, opt):
     if not status or '✓' not in status:
         raise dash.exceptions.PreventUpdate
 
     historial = historial or []
 
-    # Extraer j* del status string
-    j_star = '—'
-    for p in status.split('·'):
-        if 'j*=' in p:
-            j_star = p.strip().replace('j*=', '').replace(' A/cm²', '').strip()
+    j_star = f"{opt['j']:.3f}" if opt and 'j' in opt else '—'
 
     entrada = {
         'hora':   datetime.datetime.now().strftime('%H:%M:%S'),
@@ -1256,23 +1316,60 @@ def actualizar_historial(status, historial, modelo_ganador, T,
     return historial, tabla
 
 
-# Monitoreo — actualizar gráfico de tendencias cuando cambian sliders
+# Exportar historial a CSV
+@app.callback(
+    Output('download-historial', 'data'),
+    Input('btn-export-csv',      'n_clicks'),
+    State('store-historial',     'data'),
+    prevent_initial_call=True,
+)
+def exportar_historial(n, historial):
+    if not historial:
+        raise dash.exceptions.PreventUpdate
+    df = pd.DataFrame(historial)
+    df = df.rename(columns={
+        'hora': 'Hora', 'T': 'T [°C]', 'H2a': 'H2a', 'H2Oa': 'H2Oa',
+        'CO2a': 'CO2a', 'O2c': 'O2c', 'CO2c': 'CO2c', 'N2c': 'N2c',
+        'r1': 'r1 [Ohm·cm2]', 'modelo': 'Mejor modelo',
+        'j_star': 'j* [A/cm2]'})
+    fname = f"historial_mcfc_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return dcc.send_data_frame(df.to_csv, fname, index=False)
+
+
+# Monitoreo — análisis de sensibilidad sobre la variable seleccionada.
+# Solo computa cuando el tab Monitoreo está visible (evita correr 4
+# predicciones GPR en cada drag de slider con el tab oculto).
+SWEEP_CFG = {
+    # idx en args = (T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
+    'CO2c': {'idx': 5, 'lim': (0.3, 14.0), 'rel': 0.20, 'lbl': 'CO₂c'},
+    'T':    {'idx': 0, 'lim': (550, 650),  'abs': 25,   'lbl': 'T'},
+    'H2a':  {'idx': 1, 'lim': (0.2, 4.5),  'rel': 0.20, 'lbl': 'H₂a'},
+    'O2c':  {'idx': 4, 'lim': (0.1, 5.3),  'rel': 0.20, 'lbl': 'O₂c'},
+    'r1':   {'idx': 7, 'lim': (1.8, 3.0),  'rel': 0.10, 'lbl': 'r₁'},
+}
+
 @app.callback(
     Output('fig-monitoreo',  'figure'),
     Output('monitor-info',   'children'),
-    Input('sl-H2a',    'value'),
-    Input('sl-H2Oa',   'value'),
-    Input('sl-CO2a',   'value'),
-    Input('sl-O2c',    'value'),
-    Input('sl-CO2c',   'value'),
-    Input('sl-N2c',    'value'),
-    Input('sl-r1',     'value'),
-    Input('store-T',   'data'),
-    State('store-tab', 'data'),
+    Input('sl-H2a',      'value'),
+    Input('sl-H2Oa',     'value'),
+    Input('sl-CO2a',     'value'),
+    Input('sl-O2c',      'value'),
+    Input('sl-CO2c',     'value'),
+    Input('sl-N2c',      'value'),
+    Input('sl-r1',       'value'),
+    Input('store-T',     'data'),
+    Input('monitor-var', 'value'),
+    Input('store-tab',   'data'),
 )
-def actualizar_monitoreo(H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, T, tab):
-    args = (T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1)
-    j_arr = np.linspace(J_MIN, J_MAX, 200)
+def actualizar_monitoreo(H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, T, var, tab):
+    if tab != 'monitoreo':
+        raise dash.exceptions.PreventUpdate
+
+    cfg   = SWEEP_CFG.get(var, SWEEP_CFG['CO2c'])
+    args  = [T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1]
+    base  = args[cfg['idx']]
+    j_arr = np.linspace(J_MIN, J_MAX, 120)
 
     fig = go.Figure()
     layout = {**PLOT_LAYOUT}
@@ -1288,30 +1385,42 @@ def actualizar_monitoreo(H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1, T, tab):
     fig.add_trace(go.Scatter(x=j_arr, y=vn, mode='lines', name='Nernst',
                              line=dict(color=C['muted'], width=1.5, dash='dash')))
 
-    # Sweeps de ±20% sobre CO₂c (variable más relevante por ARD)
-    for factor, lbl, col in [(0.8, 'CO₂c −20%', C['red']),
-                              (1.0, 'CO₂c actual', C['ok']),
-                              (1.2, 'CO₂c +20%', C['teal'])]:
-        co2c_var = np.clip(CO2c * factor, 0.3, 14.0)
-        args_v = (T, H2a, H2Oa, CO2a, O2c, co2c_var, N2c, r1)
+    # Sweep de la variable seleccionada (GPR Residual)
+    if 'abs' in cfg:
+        deltas = [(-cfg['abs'], f"{cfg['lbl']} −{cfg['abs']}°C"),
+                  (0,           f"{cfg['lbl']} actual"),
+                  (+cfg['abs'], f"{cfg['lbl']} +{cfg['abs']}°C")]
+        vals = [np.clip(base + d, *cfg['lim']) for d, _ in deltas]
+    else:
+        pct = int(cfg['rel'] * 100)
+        deltas = [(1-cfg['rel'], f"{cfg['lbl']} −{pct}%"),
+                  (1.0,          f"{cfg['lbl']} actual"),
+                  (1+cfg['rel'], f"{cfg['lbl']} +{pct}%")]
+        vals = [np.clip(base * f, *cfg['lim']) for f, _ in deltas]
+
+    colores = [C['red'], C['ok'], C['teal']]
+    for (_, lbl), val, col in zip(deltas, vals, colores):
+        args_v = list(args)
+        args_v[cfg['idx']] = float(val)
         try:
             mu, _ = v_gprr(j_arr, *args_v)
             if mu is not None:
-                fig.add_trace(go.Scatter(x=j_arr, y=mu, mode='lines', name=lbl,
-                                         line=dict(color=col, width=2 if factor==1.0 else 1.2)))
+                es_base = 'actual' in lbl
+                fig.add_trace(go.Scatter(
+                    x=j_arr, y=mu, mode='lines', name=lbl,
+                    line=dict(color=col, width=2 if es_base else 1.2)))
         except Exception:
             pass
 
-    # Línea vertical en j actual (midpoint)
-    j_mid = (J_MIN + J_MAX) / 2
-    fig.add_vline(x=j_mid, line_color=C['dim'], line_dash='dot', line_width=1)
-
     fig.update_layout(**layout)
 
+    rango = f"[{min(vals):.2f}–{max(vals):.2f}]"
     info = (f"T = {T}°C  ·  H₂a = {H2a:.2f}  ·  CO₂c = {CO2c:.2f}  ·  "
-            f"r₁ = {r1:.2f} Ω·cm²  ·  Sensibilidad: sweep CO₂c ±20%")
+            f"r₁ = {r1:.2f} Ω·cm²  ·  Sensibilidad: {cfg['lbl']} en {rango} "
+            f"(modelo GPR Residual)")
     return fig, info
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    port = int(os.environ.get('PORT', 8050))
+    app.run(host='0.0.0.0', port=port, debug=False)
