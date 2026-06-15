@@ -31,32 +31,32 @@ _DIR = os.path.normpath(
 
 # ── Paleta industrial — gris acero + azul técnico ──────────────────────
 C = {
-    'bg':       '#1a1d23',
-    'surface':  '#20242c',
-    'panel':    '#252a33',
-    'border':   '#3d4455',
-    'border2':  '#2c3140',
-    'accent':   '#5a8ec8',
-    'accent2':  '#3567a0',
-    'accent_bg':'#1e2d40',
-    'ok':       '#6ab87f',
-    'ok_bg':    '#1a2e22',
-    'warn':     '#d4a843',
-    'warn_bg':  '#2a2010',
-    'red':      '#cc6360',
-    'red_bg':   '#2a1818',
-    'teal':     '#5ab5cc',
-    'text':     '#e8ecf2',
-    'muted':    '#9ba8bc',
-    'dim':      '#5e6b80',
+    'bg':       '#f0f4f8',
+    'surface':  '#ffffff',
+    'panel':    '#f7f9fc',
+    'border':   '#d1d9e0',
+    'border2':  '#e2e8f0',
+    'accent':   '#2b6cb0',
+    'accent2':  '#2c5282',
+    'accent_bg':'#ebf4ff',
+    'ok':       '#276749',
+    'ok_bg':    '#f0fff4',
+    'warn':     '#b7791f',
+    'warn_bg':  '#fffff0',
+    'red':      '#c53030',
+    'red_bg':   '#fff5f5',
+    'teal':     '#2c7a7b',
+    'text':     '#1a202c',
+    'muted':    '#4a5568',
+    'dim':      '#718096',
 }
 
 COLORES_MODELOS = {
-    'Nernst':       '#6b7585',
-    'PLS':          '#4a7eb5',
-    'KPLS':         '#b8922a',
-    'GPR':          '#6aa3c8',
-    'GPR Residual': '#5a9e6f',
+    'Nernst':       '#718096',
+    'PLS':          '#2b6cb0',
+    'KPLS':         '#c05621',
+    'GPR':          '#2c7a7b',
+    'GPR Residual': '#276749',
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -222,17 +222,19 @@ def slider_with_label(label, id, min, max, step, value, unit=''):
 # ══════════════════════════════════════════════════════════════════════════════
 PLOT_LAYOUT = dict(
     paper_bgcolor='rgba(0,0,0,0)',
-    plot_bgcolor=C['surface'],
-    font=dict(family="'JetBrains Mono', monospace", color=C['text'], size=12),
-    xaxis=dict(gridcolor=C['border2'], linecolor=C['border'],
-               tickcolor=C['border'], zerolinecolor=C['border2'],
-               tickfont=dict(size=11), title_font=dict(size=12)),
-    yaxis=dict(gridcolor=C['border2'], linecolor=C['border'],
-               tickcolor=C['border'], zerolinecolor=C['border2'],
-               tickfont=dict(size=11), title_font=dict(size=12)),
-    legend=dict(bgcolor='rgba(30,35,45,0.9)', font=dict(size=11),
+    plot_bgcolor='#ffffff',
+    font=dict(family="'JetBrains Mono', monospace", color='#1a202c', size=12),
+    xaxis=dict(gridcolor='#e2e8f0', linecolor='#d1d9e0',
+               tickcolor='#d1d9e0', zerolinecolor='#e2e8f0',
+               tickfont=dict(size=11, color='#4a5568'),
+               title_font=dict(size=12, color='#2d3748')),
+    yaxis=dict(gridcolor='#e2e8f0', linecolor='#d1d9e0',
+               tickcolor='#d1d9e0', zerolinecolor='#e2e8f0',
+               tickfont=dict(size=11, color='#4a5568'),
+               title_font=dict(size=12, color='#2d3748')),
+    legend=dict(bgcolor='rgba(255,255,255,0.95)', font=dict(size=11, color='#2d3748'),
                 orientation='h', y=-0.28,
-                bordercolor=C['border'], borderwidth=1),
+                bordercolor='#d1d9e0', borderwidth=1),
     margin=dict(t=35, b=75, l=55, r=25),
     hovermode='x unified',
 )
@@ -248,7 +250,7 @@ MODELOS_INFO = [
     {
         'nombre':  'Nernst (Semi-empírico)',
         'tipo':    'Referencia física',
-        'color':   '#6b7585',
+        'color':   '#718096',
         'desc':    'Modelo termodinámico basado en la ecuación de Nernst con correcciones de pérdidas óhmicas y cinéticas. No requiere entrenamiento.',
         'r2':      '~0.970',
         'mae':     '~0.028 V',
@@ -258,7 +260,7 @@ MODELOS_INFO = [
     {
         'nombre':  'PLS',
         'tipo':    'Regresión lineal de componentes',
-        'color':   '#4a7eb5',
+        'color':   '#2b6cb0',
         'desc':    'Partial Least Squares. Proyecta las variables en componentes latentes que maximizan la covarianza con el voltaje.',
         'r2':      '0.9694',
         'mae':     '0.0246 V',
@@ -268,7 +270,7 @@ MODELOS_INFO = [
     {
         'nombre':  'KPLS',
         'tipo':    'Regresión kernel no lineal',
-        'color':   '#b8922a',
+        'color':   '#c05621',
         'desc':    'Kernel PLS con función RBF. Captura relaciones no lineales entre variables y voltaje mediante transformación en espacio de características.',
         'r2':      '0.9829',
         'mae':     '0.0181 V',
@@ -278,7 +280,7 @@ MODELOS_INFO = [
     {
         'nombre':  'GPR',
         'tipo':    'Proceso gaussiano',
-        'color':   '#6aa3c8',
+        'color':   '#2c7a7b',
         'desc':    'Gaussian Process Regression. Modelo bayesiano no paramétrico que además de predecir el voltaje, entrega una banda de incertidumbre ±2σ.',
         'r2':      '0.9968',
         'mae':     '0.0074 V',
@@ -288,7 +290,7 @@ MODELOS_INFO = [
     {
         'nombre':  'GPR Residual',
         'tipo':    'Híbrido físico + GPR',
-        'color':   '#5a9e6f',
+        'color':   '#276749',
         'desc':    'Contribución original: combina la base física de Nernst con un GPR que aprende el error sistemático residual. Mejor desempeño global.',
         'r2':      '0.9981',
         'mae':     '0.0056 V',
@@ -364,62 +366,81 @@ app.index_string = '''<!DOCTYPE html>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            background-color: #1a1d23;
-            color: #d0d6e0;
+            background-color: #f0f4f8;
+            color: #1a202c;
             font-family: 'JetBrains Mono', 'Courier New', monospace;
         }
         ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #20242c; }
-        ::-webkit-scrollbar-thumb { background: #363c48; border-radius: 2px; }
+        ::-webkit-scrollbar-track { background: #e2e8f0; }
+        ::-webkit-scrollbar-thumb { background: #a0aec0; border-radius: 2px; }
 
-        .industrial-slider .rc-slider-rail { background: #2c3140; height: 3px; }
-        .industrial-slider .rc-slider-track { background: #3567a0; height: 3px; }
+        /* Sliders — tema light */
+        .industrial-slider .rc-slider-rail {
+            background: #cbd5e0 !important; height: 5px; border-radius: 3px;
+        }
+        .industrial-slider .rc-slider-track {
+            background: #2b6cb0 !important; height: 5px; border-radius: 3px;
+        }
         .industrial-slider .rc-slider-handle {
-            background: #1a1d23; border: 2px solid #4a7eb5;
-            width: 13px; height: 13px; margin-top: -5px;
+            background: #ffffff !important; border: 2px solid #2b6cb0 !important;
+            width: 16px; height: 16px; margin-top: -6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+            opacity: 1 !important;
         }
-        .industrial-slider .rc-slider-handle:hover { border-color: #6aa3c8; }
+        .industrial-slider .rc-slider-handle:hover {
+            border-color: #2c5282 !important;
+        }
         .industrial-slider .rc-slider-handle-dragging {
-            border-color: #6aa3c8 !important;
-            box-shadow: 0 0 0 3px rgba(74,126,181,0.15) !important;
+            border-color: #2c5282 !important;
+            box-shadow: 0 0 0 4px rgba(43,108,176,0.20) !important;
+        }
+        .industrial-slider .rc-slider-handle:focus {
+            border-color: #2b6cb0 !important;
+            box-shadow: 0 0 0 3px rgba(43,108,176,0.15) !important;
         }
 
+        /* Botones de temperatura */
         .temp-btn {
             flex: 1; padding: 7px 0; font-size: 12px;
-            border: 1px solid #3d4455; border-radius: 5px;
+            border: 1px solid #d1d9e0; border-radius: 5px;
             text-align: center; cursor: pointer;
-            color: #9ba8bc; background: #20242c;
+            color: #4a5568; background: #ffffff;
             font-family: 'JetBrains Mono', monospace;
             transition: all 0.15s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         }
-        .temp-btn:hover { border-color: #5a8ec8; color: #5ab5cc; }
+        .temp-btn:hover { border-color: #2b6cb0; color: #2b6cb0; background: #ebf4ff; }
         .temp-btn.active {
-            background: #1e2d40; color: #e8ecf2;
-            border-color: #5a8ec8; font-weight: 500;
+            background: #2b6cb0; color: #ffffff;
+            border-color: #2c5282; font-weight: 500;
+            box-shadow: 0 2px 4px rgba(43,108,176,0.25);
         }
 
+        /* Botón calcular */
         .run-btn {
-            width: 100%; padding: 12px; border: 1px solid #3567a0;
-            border-radius: 7px; background: #1e2d40; color: #5ab5cc;
+            width: 100%; padding: 12px; border: none;
+            border-radius: 7px; background: #2b6cb0; color: #ffffff;
             font-family: 'JetBrains Mono', monospace; font-size: 13px;
             font-weight: 500; cursor: pointer; letter-spacing: 0.08em;
             text-transform: uppercase; margin-top: 6px;
             transition: all 0.15s;
+            box-shadow: 0 2px 4px rgba(43,108,176,0.30);
         }
-        .run-btn:hover { background: #3567a0; color: #e8ecf2; border-color: #5a8ec8; }
+        .run-btn:hover { background: #2c5282; box-shadow: 0 4px 8px rgba(43,108,176,0.40); }
         .run-btn:active { transform: scale(0.98); }
 
         .nav-item {
-            font-size: 12px; color: #9ba8bc; cursor: pointer;
+            font-size: 12px; color: #4a5568; cursor: pointer;
             padding: 6px 14px; border-radius: 5px;
             font-family: 'JetBrains Mono', monospace;
             letter-spacing: 0.04em; transition: all 0.15s;
-            border: 0.5px solid transparent;
+            border: 1px solid transparent;
+            background: transparent;
         }
-        .nav-item:hover { color: #e8ecf2; border-color: #3d4455; }
+        .nav-item:hover { color: #2b6cb0; border-color: #d1d9e0; background: #ebf4ff; }
         .nav-item.active {
-            color: #5ab5cc; background: #1e2d40;
-            border: 1px solid #3567a0; font-weight: 500;
+            color: #ffffff; background: #2b6cb0;
+            border: 1px solid #2c5282; font-weight: 500;
         }
 
         .status-pulse {
