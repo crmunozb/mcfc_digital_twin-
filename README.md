@@ -42,7 +42,7 @@ cd mcfc_digital_twin
 ### 2. Crear entorno virtual e instalar dependencias
 
 ```bash
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate        # Linux/macOS
 # venv\Scripts\activate         # Windows
 
@@ -59,7 +59,7 @@ createdb mcfc_digital_twin
 psql -d mcfc_digital_twin -f Database/schema.sql
 
 # Cargar los datos experimentales desde el Excel
-python Database/load_data.py
+python3 Database/load_data.py
 ```
 
 > **Nota:** Los datos experimentales originales se encuentran en `Data/Data_original_PGNN.xlsx`
@@ -88,7 +88,7 @@ DB_CONFIG = {
 ### 5. Ejecutar el dashboard localmente
 
 ```bash
-python Dashboard/dashboard.py
+python3 Dashboard/dashboard.py
 ```
 
 Abre `http://localhost:8050` en tu navegador.
@@ -273,24 +273,24 @@ BD_OFFLINE=true
 3.  createdb mcfc_digital_twin
 4.  psql -d mcfc_digital_twin -f Database/schema.sql
 5.  cp config.example.py config.py  →  editar credenciales
-6.  python Database/load_data.py    →  carga Data_original_PGNN.xlsx
-7.  python Dashboard/dashboard.py   →  dashboard en localhost:8050
+6.  python3 Database/load_data.py    →  carga Data_original_PGNN.xlsx
+7.  python3 Dashboard/dashboard.py   →  dashboard en localhost:8050
 ```
 
 **Para re-entrenar modelos** (opcional — los `.pkl` ya están incluidos):
 
 ```bash
 # En orden sugerido
-python modelos/entrenar_pls_cv.py
-python modelos/entrenar_kpls_cv.py
-python modelos/entrenar_gpr.py
-python modelos/entrenar_gpr_residual.py
+python3 modelos/entrenar_pls_cv.py
+python3 modelos/entrenar_kpls_cv.py
+python3 modelos/entrenar_gpr.py
+python3 modelos/entrenar_gpr_residual.py
 ```
 
 **Para regenerar datos sintéticos:**
 
 ```bash
-python simulador/generar_datos_sinteticos_mcfc.py
+python3 simulador/generar_datos_sinteticos_mcfc.py
 ```
 
 ---
@@ -318,7 +318,7 @@ Versión completa en `requirements.txt`.
 
 Los datos provienen de **111 experimentos** realizados en el laboratorio del Prof. Jarosław Milewski (Warsaw University of Technology), con una MCFC de electrolito Li₂CO₃/K₂CO₃ operando entre 550 y 650 °C. El dataset contiene **1.171 mediciones** de curvas de polarización bajo distintas composiciones de gas y temperaturas.
 
-En paralelo, el equipo de la Universidad de Concepción desarrolló un sistema de adquisición de datos (DAQ) y SCADA para monitoreo en tiempo real de la misma celda, utilizando termopares tipo K, protocolo Modbus TCP y una Raspberry Pi como unidad de control — documentado en la tesis complementaria de Luciano Toledo (UdeC, 2025).
+Este Digital Twin forma parte de un sistema mayor desarrollado en la Universidad de Concepción, que incluye una infraestructura de adquisición de datos (DAQ) y SCADA para monitoreo en tiempo real de la celda, con termopares tipo K y protocolo Modbus TCP.
 
 ---
 
@@ -327,7 +327,7 @@ En paralelo, el equipo de la Universidad de Concepción desarrolló un sistema d
 Si utilizas este trabajo en una publicación, por favor cita:
 
 ```
-Muñoz Barrios, C. (2026). Desarrollo de un Digital Twin para el Modelamiento
+Muñoz Barrios, C. (2025). Desarrollo de un Digital Twin para el Modelamiento
 y Análisis Operacional de una Celda de Combustible de Carbonatos Fundidos (MCFC).
 Memoria de Título, Ingeniería Civil Informática, Universidad de Concepción.
 ```
