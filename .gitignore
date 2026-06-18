@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 .env
 config.py
+backup_mcfc_antes_recarga.sql
