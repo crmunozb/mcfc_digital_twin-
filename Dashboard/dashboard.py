@@ -237,6 +237,13 @@ PLOT_LAYOUT = dict(
                 bordercolor='#d1d9e0', borderwidth=1),
     margin=dict(t=35, b=75, l=55, r=25),
     hovermode='x unified',
+    dragmode='zoom',
+    modebar=dict(
+        orientation='v',
+        bgcolor='rgba(255,255,255,0.9)',
+        color='#4a5568',
+        activecolor='#2b6cb0',
+    ),
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -398,6 +405,10 @@ app.index_string = '''<!DOCTYPE html>
             border-color: #2b6cb0 !important;
             box-shadow: 0 0 0 3px rgba(43,108,176,0.15) !important;
         }
+        /* Anular rosa/magenta por defecto de Dash */
+        .rc-slider-handle { border-color: #2b6cb0 !important; }
+        .rc-slider-track { background-color: #2b6cb0 !important; }
+        .rc-slider-handle-dragging { border-color: #2c5282 !important; box-shadow: 0 0 0 4px rgba(43,108,176,0.20) !important; }
 
         /* Botones de temperatura */
         .temp-btn {
@@ -652,8 +663,17 @@ app.layout = html.Div([
 
                 html.Div([
                     section_title('◈', 'Curva de polarización E(j) y densidad de potencia'),
-                    dcc.Graph(id='fig-curvas', style={'height':'260px'},
-                              config={'displayModeBar':False}),
+                    dcc.Graph(id='fig-curvas', style={'height':'340px'},
+                              config={
+                                  'scrollZoom': True,
+                                  'displayModeBar': True,
+                                  'modeBarButtonsToRemove': ['sendDataToCloud', 'lasso2d', 'select2d'],
+                                  'toImageButtonOptions': {
+                                      'format': 'png',
+                                      'filename': 'mcfc_curva_polarizacion',
+                                      'scale': 2,
+                                  },
+                              }),
                 ], style=panel_style()),
 
                 html.Div([
@@ -1141,6 +1161,8 @@ def calcular(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
                        'title': dict(text='Voltaje E [V]',
                                      font=dict(size=10, color=C['muted']))}
     fig.update_layout(**layout)
+    fig.update_yaxes(autorange=True, rangemode='normal')
+    fig.update_layout(dragmode='zoom')
 
     # Construir outputs
     kpis = build_kpis(
@@ -1150,7 +1172,6 @@ def calcular(n, T, H2a, H2Oa, CO2a, O2c, CO2c, N2c, r1,
         best_info.get('p', 0),
         best_info.get('sigma', 0),
         T)
-
     tabla = build_tabla(filas)
 
     opt_box = html.Div([
