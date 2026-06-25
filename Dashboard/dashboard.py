@@ -27,7 +27,7 @@ F_FAR  = 96485.0
 J_MIN, J_MAX = 0.005, 0.200
 
 _DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'modelos'))
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models'))
 
 # ── Paleta industrial — gris acero + azul técnico ──────────────────────
 C = {
