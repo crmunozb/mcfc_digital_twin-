@@ -13,12 +13,12 @@ Genera:
                                             tab:comparacion_modelos
 
 Uso:
-    cd mcfc_digital_twin/modelos/
+    cd mcfc_digital_twin/models/
     python3 generar_todos_los_resumenes.py
 
 Requiere:
   - PostgreSQL activo con DB_CONFIG configurado
-  - Modelos .pkl entrenados en la carpeta modelos/
+  - Modelos .pkl entrenados en la carpeta models/
   - modelo_nernst.py en la misma carpeta
   - cargar_datos.py en la misma carpeta
 """

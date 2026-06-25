@@ -14,7 +14,7 @@ Este módulo puede ser importado desde dashboard.py y simulador_mcfc.py,
 o ejecutado directamente para realizar una prueba rápida.
 
 Uso directo:
-    python3 modelos/modelo_nernst.py
+    python3 models/modelo_nernst.py
 """
 
 import numpy as np
