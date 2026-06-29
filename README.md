@@ -32,6 +32,34 @@ La MCFC opera a alta temperatura (550–650 °C) con electrolito de carbonato fu
 - PostgreSQL 14
 - Git
 
+### Verificación rápida con `start.sh` (sin base de datos)
+
+El repositorio incluye un lanzador único que **verifica los modelos y corre el
+optimizador** usando los `.pkl` ya entrenados, sin necesidad de configurar la
+base de datos. Es la forma más rápida de comprobar que todo funciona tras clonar:
+
+```bash
+chmod +x start.sh          # solo la primera vez
+./start.sh                 # verifica los 5 modelos + optimizador (T=650 °C)
+./start.sh --temp 550      # otra temperatura (550 / 575 / 600 / 625 / 650)
+./start.sh --variante balanceado   # usa los modelos del dataset balanceado
+./start.sh --dashboard     # lanza el dashboard interactivo (localhost:8050)
+./start.sh --retrain       # reentrena todos los modelos (requiere BD — ver aviso)
+./start.sh --help          # muestra la ayuda
+```
+
+> El modo por defecto es **no destructivo**: carga los modelos serializados,
+> comprueba que sus predicciones son físicamente coherentes (curva de
+> polarización monótona decreciente, incertidumbre positiva) y ejecuta el
+> optimizador operacional. No toca la base de datos ni los archivos `.pkl`.
+>
+> El modo `--retrain` sí reentrena y **sobrescribe** los modelos que respaldan
+> las tablas de la memoria; úsalo solo de forma deliberada y con PostgreSQL
+> configurado.
+
+`run_modelos.py` puede invocarse directamente con las mismas opciones
+(`--temp`, `--variante`, y además `--csv salida.csv` para exportar las predicciones).
+
 ### 1. Clonar el repositorio
 
 ```bash
@@ -99,6 +127,9 @@ Abre `http://localhost:8050` en tu navegador.
 
 ```
 mcfc_digital_twin-/
+│
+├── start.sh                                # Lanzador: verificación + optimizador / dashboard / retrain
+├── run_modelos.py                          # Runner de verificación de modelos + optimizador
 │
 ├── Dashboard/
 │   └── dashboard.py                        # Aplicación Plotly Dash (punto de entrada)
@@ -295,7 +326,7 @@ psycopg2-binary
 scipy
 numpy
 pandas
-gunicorn
+gunicorn==26.0.0
 joblib
 ```
 
