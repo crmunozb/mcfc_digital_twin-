@@ -28,7 +28,7 @@ La MCFC opera a alta temperatura (550–650 °C) con electrolito de carbonato fu
 
 ### Prerrequisitos
 
-- Python 3.10+
+- Python 3.10 (probado en 3.10.12 — ver `.python-version`)
 - PostgreSQL 14
 - Git
 
@@ -98,7 +98,7 @@ Abre `http://localhost:8050` en tu navegador.
 ## Estructura del repositorio
 
 ```
-mcfc_digital_twin/
+mcfc_digital_twin-/
 │
 ├── Dashboard/
 │   └── dashboard.py                        # Aplicación Plotly Dash (punto de entrada)
@@ -188,11 +188,16 @@ Se entrenaron cinco familias de modelos en cuatro variantes cada una (warsaw / b
 
 | Modelo | Descripción | R² test (balanceado) |
 |---|---|---|
-| **Nernst** | Semi-empírico — baseline físico | 0,993 |
+| **Nernst** | Semi-empírico — baseline físico | 0,993* |
 | **PLS** | Partial Least Squares (n_components=9) | 0,969 |
 | **KPLS** | Kernel PLS — kernel RBF | 0,983 |
 | **GPR** | Gaussian Process Regression (kernel ARD) | 0,997 |
 | **GPR Residual** | Híbrido: Nernst + GPR sobre residuos | 0,998 |
+
+> *\* El R² de Nernst sobre el dataset balanceado no constituye un resultado independiente:
+> los datos sintéticos fueron generados con el propio modelo de Nernst, por lo que su
+> ajuste sobre ellos es esperado por construcción. La métrica de referencia honesta de
+> Nernst es R² = 0,906 sobre el dataset experimental real (`warsaw_ut`).*
 
 **Variables de entrada (9 features):**
 
@@ -262,17 +267,21 @@ web: gunicorn --chdir Dashboard dashboard:server
 **Para re-entrenar modelos** (opcional — los `.pkl` ya están incluidos en el entorno local):
 
 ```bash
+# 1. (Solo para variantes _balanceado) generar e insertar los datos sintéticos en la BD
+python3 simulator/generar_datos_sinteticos_mcfc.py --insertar
+
+# 2. Entrenar los modelos. Cada script acepta --fuente para elegir el dataset:
+#    --fuente warsaw_ut            → variante _warsaw  (solo datos reales)
+#    --fuente warsaw_ut sintetico  → variante _balanceado (real + sintético, por defecto)
 python3 models/entrenar_pls_cv.py
 python3 models/entrenar_kpls_cv.py
 python3 models/entrenar_gpr.py
 python3 models/entrenar_gpr_residual.py
 ```
 
-**Para regenerar datos sintéticos:**
-
-```bash
-python3 simulator/generar_datos_sinteticos_mcfc.py
-```
+> **Importante:** las variantes `_balanceado` leen los datos sintéticos desde la base
+> de datos, por lo que el paso 1 debe ejecutarse **antes** del re-entrenamiento. Si se
+> entrena sin haber insertado los sintéticos, solo podrán generarse las variantes `_warsaw`.
 
 ---
 
@@ -304,7 +313,7 @@ Este Digital Twin forma parte de un sistema mayor desarrollado en la Universidad
 
 ## Citación
 
-Si utilizas este trabajo en una publicación, por favor cita:
+Si utiliza este trabajo en una publicación, por favor citar:
 
 ```
 Muñoz Barrios, C. (2026). Desarrollo de un Digital Twin para el Modelamiento
@@ -320,4 +329,4 @@ Memoria de Título, Ingeniería Civil Informática, Universidad de Concepción.
 GitHub: [@crmunozb](https://github.com/crmunozb)
 
 **Prof. Hugo Garcés Hernández** — Profesor Guía  
-Departamento de Ingeniería Eléctrica, Universidad de Concepción
+Departamento de Ingeniería Informática, Universidad de Concepción

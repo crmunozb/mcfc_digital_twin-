@@ -37,7 +37,7 @@ from config import DB_CONFIG
 
 # Importar modelo de Nernst centralizado
 # Garantiza consistencia con el evaluador y el dashboard
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "modelos"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
 from modelo_nernst import voltaje_modelo as _voltaje_modelo
 from modelo_nernst import e_nernst as _e_nernst
 
@@ -48,7 +48,7 @@ R  = 8.314    # J/(mol·K)
 F  = 96485.0  # C/mol
 
 # Parámetros del modelo Nernst calibrado (mismo que modelo_nernst.py)
-R2    = 91.878   # Ω⁻¹·cm²  — pérdidas de activación
+R2    = 91.878   # cm²/A     — pérdidas de activación
 DELTA = 0.012    # V        — offset de calibración
 
 # ─────────────────────────────────────────────
