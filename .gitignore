@@ -1,11 +1,19 @@
+# Credenciales y configuración local (NO versionar)
 config.py
-*.log
-__pycache__/
-*.pyc
-modelos/*.pkl
-.venv/
-__pycache__/
-*.pyc
 .env
-config.py
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Cachés de Python
+__pycache__/
+*.pyc
+
+# Logs y respaldos
+*.log
 backup_mcfc_antes_recarga.sql
+
+# Nota: los modelos serializados en models/*.pkl SÍ se versionan
+# intencionalmente, ya que el dashboard en Render (modo BD OFFLINE)
+# los necesita embebidos para funcionar sin acceso a la base de datos.
