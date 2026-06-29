@@ -119,6 +119,12 @@ DB_CONFIG = {
 python3 Dashboard/dashboard.py
 ```
 
+También se puede lanzar con el botón único:
+
+```bash
+./start.sh --dashboard
+```
+
 Abre `http://localhost:8050` en tu navegador.
 
 ---
