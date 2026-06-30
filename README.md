@@ -13,6 +13,16 @@ Este repositorio implementa un **Digital Twin** (gemelo digital) para una celda 
 
 La MCFC opera a alta temperatura (550–650 °C) con electrolito de carbonato fundido Li₂CO₃/K₂CO₃, siendo relevante para generación de energía estacionaria y sistemas de hidrógeno.
 
+---
+
+### Demostración pública en Render
+
+El Digital Twin se encuentra disponible públicamente como demostración en línea, accesible desde cualquier navegador web:
+
+**[https://mcfc-digital-twin.onrender.com](https://mcfc-digital-twin.onrender.com)**
+
+Esta instancia opera en modo BD OFFLINE con los modelos serializados embebidos, permitiendo explorar el optimizador operacional sin necesidad de instalación local.
+
 ### Componentes principales
 
 | Componente | Descripción |
@@ -31,34 +41,6 @@ La MCFC opera a alta temperatura (550–650 °C) con electrolito de carbonato fu
 - Python 3.10 (probado en 3.10.12 — ver `.python-version`)
 - PostgreSQL 14
 - Git
-
-### Verificación rápida con `start.sh` (sin base de datos)
-
-El repositorio incluye un lanzador único que **verifica los modelos y corre el
-optimizador** usando los `.pkl` ya entrenados, sin necesidad de configurar la
-base de datos. Es la forma más rápida de comprobar que todo funciona tras clonar:
-
-```bash
-chmod +x start.sh          # solo la primera vez
-./start.sh                 # verifica los 5 modelos + optimizador (T=650 °C)
-./start.sh --temp 550      # otra temperatura (550 / 575 / 600 / 625 / 650)
-./start.sh --variante balanceado   # usa los modelos del dataset balanceado
-./start.sh --dashboard     # lanza el dashboard interactivo (localhost:8050)
-./start.sh --retrain       # reentrena todos los modelos (requiere BD — ver aviso)
-./start.sh --help          # muestra la ayuda
-```
-
-> El modo por defecto es **no destructivo**: carga los modelos serializados,
-> comprueba que sus predicciones son físicamente coherentes (curva de
-> polarización monótona decreciente, incertidumbre positiva) y ejecuta el
-> optimizador operacional. No toca la base de datos ni los archivos `.pkl`.
->
-> El modo `--retrain` sí reentrena y **sobrescribe** los modelos que respaldan
-> las tablas de la memoria; úsalo solo de forma deliberada y con PostgreSQL
-> configurado.
-
-`run_modelos.py` puede invocarse directamente con las mismas opciones
-(`--temp`, `--variante`, y además `--csv salida.csv` para exportar las predicciones).
 
 ### 1. Clonar el repositorio
 
@@ -95,13 +77,13 @@ python3 Database/load_data.py
 
 ### 4. Configurar la conexión a la base de datos
 
-Copia el archivo de ejemplo y edita tus credenciales:
+Copie el archivo de ejemplo y edite sus credenciales:
 
 ```bash
 cp config.example.py config.py
 ```
 
-Edita `config.py`:
+Edite `config.py`:
 
 ```python
 DB_CONFIG = {
@@ -119,15 +101,43 @@ DB_CONFIG = {
 python3 Dashboard/dashboard.py
 ```
 
-También se puede lanzar con el botón único:
+También puede lanzarlo con el botón único:
 
 ```bash
 ./start.sh --dashboard
 ```
 
-Abre `http://localhost:8050` en tu navegador.
+Abra `http://localhost:8050` en su navegador.
 
 ---
+
+### Verificación rápida con `start.sh` (sin base de datos)
+
+El repositorio incluye un lanzador único que **verifica los modelos y corre el
+optimizador** usando los `.pkl` ya entrenados, sin necesidad de configurar la
+base de datos. Es la forma más rápida de comprobar que todo funciona tras clonar:
+
+```bash
+chmod +x start.sh          # solo la primera vez
+./start.sh                 # verifica los 5 modelos + optimizador (T=650 °C)
+./start.sh --temp 550      # otra temperatura (550 / 575 / 600 / 625 / 650)
+./start.sh --variante balanceado   # usa los modelos del dataset balanceado
+./start.sh --dashboard     # lanza el dashboard interactivo (localhost:8050)
+./start.sh --retrain       # reentrena todos los modelos (requiere BD — ver aviso)
+./start.sh --help          # muestra la ayuda
+```
+
+> El modo por defecto es **no destructivo**: carga los modelos serializados,
+> comprueba que sus predicciones son físicamente coherentes (curva de
+> polarización monótona decreciente, incertidumbre positiva) y ejecuta el
+> optimizador operacional. No toca la base de datos ni los archivos `.pkl`.
+>
+> El modo `--retrain` sí reentrena y **sobrescribe** los modelos que respaldan
+> las tablas de la memoria; úsalo solo de forma deliberada y con PostgreSQL
+> configurado.
+
+`run_modelos.py` puede invocarse directamente con las mismas opciones
+(`--temp`, `--variante`, y además `--csv salida.csv` para exportar las predicciones).
 
 ## Estructura del repositorio
 
@@ -280,15 +290,6 @@ El dashboard está diseñado como **herramienta de investigación remota** para 
 > | **Laboratorio (local)** | Sí — PostgreSQL en vivo | Sí — `.pkl` locales | Desarrollo, reentrenamiento, DAQ |
 > | **Render (remoto)** | No — BD OFFLINE | Sí — `.pkl` embebidos | Demostración e investigación remota |
 
-### Despliegue en Render
-
-```
-# Procfile
-web: gunicorn --chdir Dashboard dashboard:server
-```
-
----
-
 ## Flujo de replicabilidad completo
 
 ```
@@ -304,17 +305,20 @@ web: gunicorn --chdir Dashboard dashboard:server
 **Para re-entrenar modelos** (opcional — los `.pkl` ya están incluidos en el entorno local):
 
 ```bash
-# 1. (Solo para variantes _balanceado) generar e insertar los datos sintéticos en la BD
+# 1. Generar e insertar datos sintéticos (solo para variantes _balanceado)
 python3 simulator/generar_datos_sinteticos_mcfc.py --insertar
 
-# 2. Entrenar los modelos. Cada script acepta --fuente para elegir el dataset:
-#    --fuente warsaw_ut            → variante _warsaw  (solo datos reales)
-#    --fuente warsaw_ut sintetico  → variante _balanceado (real + sintético, por defecto)
+# 2. Entrenar los modelos
 python3 models/entrenar_pls_cv.py
 python3 models/entrenar_kpls_cv.py
 python3 models/entrenar_gpr.py
 python3 models/entrenar_gpr_residual.py
 ```
+
+Cada script de entrenamiento acepta la opción `--fuente` para elegir el dataset:
+`--fuente warsaw_ut` genera la variante `_warsaw` (solo datos reales), mientras que
+`--fuente warsaw_ut sintetico` genera la variante `_balanceado` (datos reales más
+sintéticos; es la opción por defecto).
 
 > **Importante:** las variantes `_balanceado` leen los datos sintéticos desde la base
 > de datos, por lo que el paso 1 debe ejecutarse **antes** del re-entrenamiento. Si se
@@ -363,6 +367,7 @@ Memoria de Título, Ingeniería Civil Informática, Universidad de Concepción.
 ## Contacto
 
 **Cristóbal Muñoz Barrios** — Autor  
+Correo: crmunoz2018@udec.cl  
 GitHub: [@crmunozb](https://github.com/crmunozb)
 
 **Prof. Hugo Garcés Hernández** — Profesor Guía  
