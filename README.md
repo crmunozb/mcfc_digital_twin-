@@ -144,70 +144,35 @@ chmod +x start.sh          # solo la primera vez
 ```
 mcfc_digital_twin-/
 │
-├── start.sh                                # Lanzador: verificación + optimizador / dashboard / retrain
-├── run_modelos.py                          # Runner de verificación de modelos + optimizador
+├── start.sh                    # Lanzador: verificación + optimizador / dashboard / retrain
+├── run_modelos.py              # Runner de verificación de modelos + optimizador
 │
 ├── Dashboard/
-│   └── dashboard.py                        # Aplicación Plotly Dash (punto de entrada)
+│   └── dashboard.py            # Aplicación Plotly Dash (punto de entrada)
 │
 ├── Data/
-│   └── Data_original_PGNN.xlsx             # Dataset experimental (Milewski, WUT)
+│   └── Data_original_PGNN.xlsx # Dataset experimental (Milewski, WUT)
 │
 ├── Database/
-│   ├── schema.sql                          # Definición del esquema PostgreSQL
-│   └── load_data.py                        # Script de carga de datos desde Excel
+│   ├── schema.sql              # Definición del esquema PostgreSQL
+│   └── load_data.py            # Carga de datos desde Excel
 │
 ├── models/
-│   ├── modelo_nernst.py                    # Modelo semi-empírico (ecuación de Nernst)
-│   │
-│   ├── entrenar_pls_cv.py                  # Entrenamiento PLS con validación cruzada
-│   ├── entrenar_kpls_cv.py                 # Entrenamiento KPLS
-│   ├── entrenar_gpr.py                     # Entrenamiento GPR (kernel ARD)
-│   ├── entrenar_gpr_residual.py            # Entrenamiento GPR Residual (híbrido Nernst)
-│   │
-│   ├── evaluar_nernst.py                   # Evaluación modelo Nernst
-│   ├── evaluar_holdout.py                  # Evaluación en experimento holdout
-│   ├── evaluar_por_experimento.py          # Métricas por experimento
-│   │
-│   ├── curva_aprendizaje.py                # Script de curvas de aprendizaje
-│   ├── curva_aprendizaje_mae.pdf           # Gráfico MAE
-│   ├── curva_aprendizaje_nrmse.pdf         # Gráfico NRMSE
-│   ├── curva_aprendizaje_r2.pdf            # Gráfico R²
-│   ├── curva_aprendizaje_resultados.csv    # Datos de curvas de aprendizaje
-│   │
-│   ├── optimizador_mcfc.py                 # Optimizador j* (scipy.minimize_scalar)
-│   ├── generar_todos_los_resumenes.py      # Resúmenes globales de métricas
-│   ├── cargar_datos.py                     # Utilidades de carga y muestreo balanceado
-│   │
-│   ├── evaluacion_global.csv               # Métricas globales todos los modelos
-│   ├── evaluacion_holdout.csv              # Métricas en holdout
-│   ├── evaluacion_por_experimento_*.csv    # Métricas por experimento
-│   ├── resumen_por_temperatura*.csv        # Métricas desagregadas por temperatura
-│   │
-│   ├── pls_voltaje_cv_warsaw.pkl           # Modelo PLS — dataset warsaw
-│   ├── pls_voltaje_cv_balanceado.pkl       # Modelo PLS — dataset balanceado
-│   ├── pls_voltaje_cv_warsaw_holdout.pkl   # Modelo PLS — warsaw holdout
-│   ├── pls_voltaje_cv_balanceado_holdout.pkl
-│   ├── kpls_voltaje_cv_warsaw.pkl          # Modelos KPLS (ídem variantes)
-│   ├── kpls_voltaje_cv_balanceado.pkl
-│   ├── kpls_voltaje_cv_warsaw_holdout.pkl
-│   ├── kpls_voltaje_cv_balanceado_holdout.pkl
-│   ├── gpr_voltaje_warsaw.pkl              # Modelos GPR (ídem variantes)
-│   ├── gpr_voltaje_balanceado.pkl
-│   ├── gpr_voltaje_warsaw_holdout.pkl
-│   ├── gpr_voltaje_balanceado_holdout.pkl
-│   ├── gpr_residual_warsaw.pkl             # Modelos GPR Residual (ídem variantes)
-│   ├── gpr_residual_balanceado.pkl
-│   ├── gpr_residual_warsaw_holdout.pkl
-│   └── gpr_residual_balanceado_holdout.pkl
+│   ├── modelo_nernst.py        # Modelo semi-empírico (ecuación de Nernst)
+│   ├── entrenar_*.py           # Entrenamiento de PLS, KPLS, GPR y GPR Residual
+│   ├── evaluar_*.py            # Evaluación de modelos y experimento holdout
+│   ├── optimizador_mcfc.py     # Optimizador j* (scipy.minimize_scalar)
+│   ├── cargar_datos.py         # Carga y muestreo balanceado
+│   ├── *.pkl                   # 16 modelos serializados (4 familias × 4 variantes)
+│   └── *.csv / *.pdf           # Métricas y gráficos de las evaluaciones
 │
 ├── simulator/
-│   └── generar_datos_sinteticos_mcfc.py    # Generador de curvas sintéticas (Nernst)
+│   └── generar_datos_sinteticos_mcfc.py   # Generador de curvas sintéticas (Nernst)
 │
-├── config.py                               # Credenciales BD (NO incluir en git)
-├── config.example.py                       # Plantilla de configuración
-├── Procfile                                # Gunicorn: --chdir Dashboard dashboard:server
-├── requirements.txt                        # Dependencias Python
+├── config.py                   # Credenciales BD (NO incluir en git)
+├── config.example.py           # Plantilla de configuración
+├── Procfile                    # Configuración de despliegue (Gunicorn)
+├── requirements.txt            # Dependencias Python
 └── README.md
 ```
 
@@ -372,3 +337,6 @@ GitHub: [@crmunozb](https://github.com/crmunozb)
 
 **Prof. Hugo Garcés Hernández** — Profesor Guía  
 Departamento de Ingeniería Informática, Universidad de Concepción
+
+**Prof. Andrés Escalona** — Profesor Co-Guía  
+Departamento de Ingeniería Mecánica, Universidad de Concepción
